@@ -1,18 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.10;
+pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "./LendingPool.sol";
 import "../tokens/CToken.sol";
 import "./InterestRateModel.sol";
-
-/**
- * @title AToken
- * @notice Interface minimale du token de dépôt
- */
-interface IAToken {
-    function setLendingPool(address pool) external;
-}
 
 /**
  * @title LendingPoolFactory
@@ -27,7 +18,6 @@ contract LendingPoolFactory is Ownable {
     event PoolCreated(
         address indexed asset,
         address indexed pool,
-        address aToken,
         address cToken,
         string name,
         string symbol
@@ -49,15 +39,11 @@ contract LendingPoolFactory is Ownable {
         require(assetToPools[asset] == address(0), "Pool déjà existante");
         require(collateralRatio >= 10000, "Ratio doit être >= 100%");
 
-        // Créer les tokens pour la pool
-        string memory aTokenName = string(abi.encodePacked("D3FI ", name, " Deposit"));
-        string memory aTokenSymbol = string(abi.encodePacked("a", symbol));
-
-        string memory cTokenName = string(abi.encodePacked("D3FI ", name, " Collateral"));
+        // Créer un seul token pour la pool
+        string memory cTokenName = string(abi.encodePacked("D3FI ", name, " Token"));
         string memory cTokenSymbol = string(abi.encodePacked("c", symbol));
 
         // Déployer les contrats
-        CToken _aToken = new CToken(aTokenName, aTokenSymbol, asset);
         CToken _cToken = new CToken(cTokenName, cTokenSymbol, asset);
 
         InterestRateModel _interestRateModel = new InterestRateModel(
@@ -72,14 +58,12 @@ contract LendingPoolFactory is Ownable {
         // Créer la pool
         LendingPool pool = new LendingPool(
             asset,
-            address(_aToken),
             address(_cToken),
             address(_interestRateModel),
             collateralRatio
         );
 
         // Configurer les permissions
-        _aToken.setLendingPool(address(pool));
         _cToken.setLendingPool(address(pool));
         _interestRateModel.transferOwnership(address(pool));
 
@@ -90,7 +74,6 @@ contract LendingPoolFactory is Ownable {
         emit PoolCreated(
             asset,
             address(pool),
-            address(_aToken),
             address(_cToken),
             name,
             symbol
