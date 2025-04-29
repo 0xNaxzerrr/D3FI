@@ -85,8 +85,8 @@ contract InterestRateModel is Ownable {
         uint256 _minRate,
         uint256 _maxRate
     ) external onlyOwner {
-        require(_minRate < _maxRate, "Min doit être < max");
-        require(_optimalUtilizationRate <= 10000, "Taux doit être <= 100%");
+        require(_minRate < _maxRate, "Min must be < max");
+        require(_optimalUtilizationRate <= 10000, "Rate must be <= 100%");
 
         baseRate = _baseRate;
         slopeRate1 = _slopeRate1;

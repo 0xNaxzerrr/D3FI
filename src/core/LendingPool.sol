@@ -6,6 +6,7 @@ import "../../lib/openzeppelin-contracts/contracts/security/ReentrancyGuard.sol"
 import "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import "../interfaces/IInterestRateModel.sol";
 import "../interfaces/IToken.sol";
+import "../interfaces/IPriceOracle.sol";
 
 /**
  * @title LendingPool
@@ -43,6 +44,9 @@ contract LendingPool is ReentrancyGuard, Ownable {
     event Borrowed(address indexed user, uint256 amount);
     event Repaid(address indexed user, uint256 amount);
 
+
+    address public priceOracle;
+
     /**
      * @notice Initialise une nouvelle pool de prêt
      * @param _asset Adresse du token sous-jacent (address(0) pour ETH)
@@ -54,6 +58,7 @@ contract LendingPool is ReentrancyGuard, Ownable {
         address _asset,
         address _cToken,
         address _interestRateModel,
+        address _priceOracle,
         uint256 _collateralRatio
     ) {
         require(_collateralRatio >= 10000, "Collateral ratio must be >= 100%");
@@ -63,6 +68,7 @@ contract LendingPool is ReentrancyGuard, Ownable {
         interestRateModel = _interestRateModel;
         collateralRatio = _collateralRatio;
         lastUpdateTimestamp = block.timestamp;
+        priceOracle = _priceOracle;
 
         // Initialiser avec un taux par défaut
         currentInterestRate = 500; // 5%
@@ -201,22 +207,47 @@ contract LendingPool is ReentrancyGuard, Ownable {
         emit CollateralWithdrawn(msg.sender, amount);
     }
 
-    /**
-     * @notice Emprunte des actifs contre le collatéral fourni
-     * @param amount Montant à emprunter
-     */
+/**
+ * @notice Emprunte des actifs contre le collatéral fourni
+ * @param amount Montant à emprunter
+ */
     function borrow(uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be > 0");
         require(amount <= totalDeposits - totalBorrows, "Not enough liquidity");
 
-        // Vérifier que l'utilisateur a assez de collatéral
+        // Calculer le nouveau total d'emprunt
         uint256 newBorrowTotal = userBorrows[msg.sender] + amount;
-        uint256 requiredCollateral = (newBorrowTotal * collateralRatio) / 10000;
 
-        require(collateralSupplied[msg.sender] >= requiredCollateral, "Insufficient collateral");
+        // Vérification du collatéral basée sur les prix si l'oracle est disponible
+        if (priceOracle != address(0)) {
+            // Obtenir la valeur USD du collatéral fourni par l'utilisateur
+            uint256 collateralValueUsd = IPriceOracle(priceOracle).assetToUsd(
+                cToken,  // Utiliser l'adresse du token de collatéral
+                collateralSupplied[msg.sender]
+            );
+
+            // Obtenir la valeur USD du montant total emprunté
+            uint256 borrowValueUsd = IPriceOracle(priceOracle).assetToUsd(
+                asset,  // Utiliser l'adresse de l'actif emprunté
+                newBorrowTotal
+            );
+
+            // Calculer la valeur de collatéral requise basée sur le ratio
+            uint256 requiredCollateralValueUsd = (borrowValueUsd * collateralRatio) / 10000;
+
+            // Vérifier que l'utilisateur a suffisamment de collatéral
+            require(collateralValueUsd >= requiredCollateralValueUsd,
+                "Insufficient collateral value");
+        } else {
+            // Fallback: utilisation de la logique simple sans oracle
+            // Pour les actifs de même type ou quand l'oracle n'est pas disponible
+            uint256 requiredCollateral = (newBorrowTotal * collateralRatio) / 10000;
+            require(collateralSupplied[msg.sender] >= requiredCollateral,
+                "Insufficient collateral");
+        }
 
         // Mettre à jour les données d'emprunt
-        userBorrows[msg.sender] += amount;
+        userBorrows[msg.sender] = newBorrowTotal;
         totalBorrows += amount;
 
         // Transférer les actifs à l'utilisateur

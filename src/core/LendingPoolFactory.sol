@@ -4,24 +4,33 @@ pragma solidity ^0.8.29;
 import "./LendingPool.sol";
 import "../tokens/CToken.sol";
 import "./InterestRateModel.sol";
+import "../utils/PriceOracle.sol";
 
 /**
  * @title LendingPoolFactory
  * @notice Permet aux admins de créer des pools de prêt pour différents actifs
  */
 contract LendingPoolFactory is Ownable {
+
+    address public priceOracle;
+
     // Mapping des pools par actif
     mapping(address => address) public assetToPools;
     address[] public allPools;
 
-    // Événements
-    event PoolCreated(
-        address indexed asset,
-        address indexed pool,
-        address cToken,
-        string name,
-        string symbol
-    );
+    event PoolCreated(address indexed asset, address indexed pool, address cToken, string name, string symbol);
+    event PriceOracleSet(address indexed oracle);
+
+
+    /**
+     * @notice Définit l'oracle de prix
+     * @param _priceOracle Adresse du contrat oracle
+     */
+    function setPriceOracle(address _priceOracle) external onlyOwner {
+        require(_priceOracle != address(0), "Invalid oracle address");
+        priceOracle = _priceOracle;
+        emit PriceOracleSet(_priceOracle);
+    }
 
     /**
      * @notice Crée une nouvelle pool de prêt pour un actif
@@ -36,8 +45,8 @@ contract LendingPoolFactory is Ownable {
         string memory symbol,
         uint256 collateralRatio
     ) external onlyOwner returns (address) {
-        require(assetToPools[asset] == address(0), "Pool déjà existante");
-        require(collateralRatio >= 10000, "Ratio doit être >= 100%");
+        require(assetToPools[asset] == address(0), "Pool already exists for this asset");
+        require(collateralRatio >= 10000, "Ratio must be >= 100%");
 
         // Créer un seul token pour la pool
         string memory cTokenName = string(abi.encodePacked("D3FI ", name, " Token"));
@@ -60,6 +69,7 @@ contract LendingPoolFactory is Ownable {
             asset,
             address(_cToken),
             address(_interestRateModel),
+            priceOracle,
             collateralRatio
         );
 
