@@ -1,5 +1,3 @@
-D3FI - API
-
 # Aperçu du Projet
 Ce projet vise à développer l'API backend en Rust pour une plateforme décentralisée de prêt et d'emprunt (lending & borrowing) sur la blockchain Ethereum. L'API servira d'interface entre les smart contracts Solidity et l'application frontend.
 
