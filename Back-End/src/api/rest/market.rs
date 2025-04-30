@@ -1,70 +1,47 @@
 use axum::{
-    routing::get,
-    Router,
-    Json,
     extract::State,
+    routing::get,
+    Router, Json,
 };
-use serde::Serialize;
-use std::sync::Arc;
+use sqlx::PgPool;
+use anyhow::Result;
+use crate::db::postgres::AssetRepository;
+use crate::db::models::Asset;
 
-#[derive(Serialize)]
-struct MarketStats {
-    total_supplied: String,
-    total_borrowed: String,
-    active_users: u64,
-}
-
-#[derive(Serialize)]
-struct Asset {
-    symbol: String,
-    address: String,
-    supply_apy: String,
-    borrow_apy: String,
-    total_supplied: String,
-    total_borrowed: String,
-}
-
-pub fn router() -> Router {
+pub fn router(pool: PgPool) -> Router {
     Router::new()
         .route("/api/v1/market/stats", get(get_market_stats))
         .route("/api/v1/market/assets", get(get_market_assets))
         .route("/api/v1/market/rates", get(get_market_rates))
+        .with_state(pool)
 }
 
-async fn get_market_stats() -> Json<MarketStats> {
-    // Placeholder - À remplacer par l'appel réel au service
-    Json(MarketStats {
-        total_supplied: "10000000".to_string(),
-        total_borrowed: "5000000".to_string(),
-        active_users: 1500,
-    })
+async fn get_market_stats() -> Json<serde_json::Value> {
+    // Pour l'instant, on garde des données factices pour cet endpoint
+    Json(serde_json::json!({
+        "total_supplied": "10000000",
+        "total_borrowed": "5000000",
+        "active_users": 1500
+    }))
 }
 
-async fn get_market_assets() -> Json<Vec<Asset>> {
-    // Placeholder - À remplacer par l'appel réel au service
-    let assets = vec![
-        Asset {
-            symbol: "ETH".to_string(),
-            address: "0x...".to_string(),
-            supply_apy: "2.5".to_string(),
-            borrow_apy: "3.2".to_string(),
-            total_supplied: "5000".to_string(),
-            total_borrowed: "3000".to_string(),
-        },
-        Asset {
-            symbol: "USDC".to_string(),
-            address: "0x...".to_string(),
-            supply_apy: "3.1".to_string(),
-            borrow_apy: "4.5".to_string(),
-            total_supplied: "2000000".to_string(),
-            total_borrowed: "1500000".to_string(),
-        },
-    ];
+async fn get_market_assets(
+    State(pool): State<PgPool>
+) -> Result<Json<Vec<Asset>>, axum::http::StatusCode> {
+    let repo = AssetRepository::new(pool);
     
-    Json(assets)
+    match repo.get_all_assets().await {
+        Ok(assets) => Ok(Json(assets)),
+        Err(e) => {
+            tracing::error!("Failed to get assets: {:?}", e);
+            Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
-async fn get_market_rates() -> Json<Vec<Asset>> {
-    // Pour l'instant, on réutilise la même structure pour les taux
-    get_market_assets().await
+async fn get_market_rates(
+    State(pool): State<PgPool>
+) -> Result<Json<Vec<Asset>>, axum::http::StatusCode> {
+    // Pour les taux, on utilise aussi les données des assets
+    get_market_assets(State(pool)).await
 }

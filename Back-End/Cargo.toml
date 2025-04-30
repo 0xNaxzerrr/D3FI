@@ -14,7 +14,7 @@ tower-http = { version = "0.5", features = ["trace", "cors"] }
 ethers = { version = "2.0", features = ["ws", "rustls"] }
 
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "macros"] }
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "macros", "uuid", "chrono", "bigdecimal"] }
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 
 # WebSockets
@@ -32,12 +32,13 @@ prometheus = "0.13"
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.5", features = ["v4", "serde"] }
-dotenv = "0.15"
+uuid = { version = "1", features = ["v4", "fast-rng", "macro-diagnostics", "serde"] }
+dotenvy = "0.15"  
 config = "0.13"
 anyhow = "1.0"        # Error handling
 thiserror = "1.0"     # Error definition
-bigdecimal = "0.4"    # For precise financial calculations
+bigdecimal = { version = "0.4", features = ["serde"] }   # For precise financial calculations
+rust_decimal = { version = "1.34", features = ["serde"] }
 
 [dev-dependencies]
 mockall = "0.12"
