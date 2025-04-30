@@ -1,6 +1,6 @@
 D3FI - API
 
-### Aperçu du Projet
+# Aperçu du Projet
 Ce projet vise à développer l'API backend en Rust pour une plateforme décentralisée de prêt et d'emprunt (lending & borrowing) sur la blockchain Ethereum. L'API servira d'interface entre les smart contracts Solidity et l'application frontend.
 
 ## Objectifs
@@ -13,7 +13,7 @@ Ce projet vise à développer l'API backend en Rust pour une plateforme décentr
 
 ## Fonctionnalités Principales
 
-1. Surveillance des Health Factors
+### Surveillance des Health Factors
 Objectif: Surveiller en temps réel la santé des positions collatéralisées pour prévenir les liquidations imprévues.
 Fonctionnalités:
 
@@ -23,13 +23,13 @@ Historisation des health factors pour analyse de tendance
 
 Niveaux de risque:
 
-Niveau sécurisé: Health factor > 1.5 → Pas d'alerte
-Niveau d'avertissement: 1.2 < Health factor < 1.5 → Notification d'avertissement
-Niveau critique: 1.05 < Health factor < 1.2 → Notification urgente
-Niveau pré-liquidation: 1.0 < Health factor < 1.05 → Alerte en temps réel
-Liquidation: Health factor ≤ 1.0 → Notification de liquidation
+- Niveau sécurisé: Health factor > 1.5 → Pas d'alerte
+- Niveau d'avertissement: 1.2 < Health factor < 1.5 → Notification d'avertissement
+- Niveau critique: 1.05 < Health factor < 1.2 → Notification urgente
+- Niveau pré-liquidation: 1.0 < Health factor < 1.05 → Alerte en temps réel
+- Liquidation: Health factor ≤ 1.0 → Notification de liquidation
 
-2. Système de Notification
+### Système de Notification
 Objectif: Informer proactivement les utilisateurs des changements de statut de leurs positions.
 Fonctionnalités:
 
@@ -37,7 +37,7 @@ Notifications en temps réel via WebSockets
 Notifications configurables selon les préférences utilisateur
 Support multi-niveaux d'alertes selon la gravité
 
-3. Gestion des Liquidations
+### Gestion des Liquidations
 Objectif: Faciliter le processus de liquidation des positions sous-collatéralisées.
 Fonctionnalités:
 
@@ -45,7 +45,7 @@ Détection automatique des positions liquidables
 Déclenchement des transactions de liquidation
 Notification des liquidations effectuées
 
-4. Interface avec la Blockchain
+### Interface avec la Blockchain
 Objectif: Optimiser les interactions avec la blockchain Ethereum.
 Fonctionnalités:
 
@@ -147,9 +147,9 @@ Endpoints WebSocket
 
 # Plan de Mise en Œuvre
 
-Phase 1: Développement de l'infrastructure de base et connexion blockchain
-Phase 2: Implémentation du monitoring des health factors
-Phase 3: Développement du système de notification
-Phase 4: Mise en place du mécanisme de liquidation
-Phase 5: Tests d'intégration et de charge
-Phase 6: Déploiement et surveillance
+- Phase 1: Développement de l'infrastructure de base et connexion blockchain
+- Phase 2: Implémentation du monitoring des health factors
+- Phase 3: Développement du système de notification
+- Phase 4: Mise en place du mécanisme de liquidation
+- Phase 5: Tests d'intégration et de charge
+- Phase 6: Déploiement et surveillance
