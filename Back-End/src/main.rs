@@ -1,10 +1,9 @@
-use axum::{
-    routing::{get, post},
-    Router,
-};
+use axum::Router;
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use dotenvy::dotenv;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 mod api;
 mod blockchain;
@@ -34,11 +33,16 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!("./migrations").run(&db_pool).await?;
     
     // Construire l'application avec le pool de connexion
-    let app = api::create_router(db_pool);
+    let mut app = api::create_router(db_pool);
+
+    // Ajouter Swagger UI
+    app = app.merge(SwaggerUi::new("/swagger-ui")
+        .url("/api-docs/openapi.json", api::ApiDoc::openapi()));
 
     // Définir l'adresse d'écoute
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     tracing::info!("server listening on {}", addr);
+    tracing::info!("Swagger UI available at http://{}/swagger-ui", addr);
 
     // Démarrer le serveur
     let listener = tokio::net::TcpListener::bind(&addr).await?;

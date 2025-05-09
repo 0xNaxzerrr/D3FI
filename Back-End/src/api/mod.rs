@@ -1,10 +1,15 @@
-mod rest;
-mod ws;
+pub mod rest;
+pub mod ws;
+pub mod openapi;
+pub mod models;
 
 use axum::Router;
 use sqlx::PgPool;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
+
+pub use openapi::ApiDoc;
+pub use models::*;
 
 pub fn create_router(pool: PgPool) -> Router {
     // Configurer CORS

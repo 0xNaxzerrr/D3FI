@@ -1,41 +1,9 @@
 use axum::{
-    extract::{Path, State},
+    extract::Path,
     routing::get,
     Json, Router,
 };
-use serde::Serialize;
-use std::sync::Arc;
-
-#[derive(Serialize)]
-struct UserPortfolio {
-    address: String,
-    supplied_assets: Vec<UserAsset>,
-    borrowed_assets: Vec<UserAsset>,
-    health_factor: String,
-}
-
-#[derive(Serialize)]
-struct UserAsset {
-    symbol: String,
-    amount: String,
-    value_usd: String,
-}
-
-#[derive(Serialize)]
-struct HealthInfo {
-    current: String,
-    threshold: String,
-    status: String,
-}
-
-#[derive(Serialize)]
-struct Transaction {
-    timestamp: u64,
-    tx_hash: String,
-    action: String,
-    asset: String,
-    amount: String,
-}
+use crate::api::models::{UserPortfolio, UserAsset, HealthInfo, Transaction};
 
 pub fn router() -> Router {
     Router::new()
@@ -46,8 +14,19 @@ pub fn router() -> Router {
         .route("/api/v1/users/:address/health/history", get(get_user_health_history))
 }
 
-async fn get_user_portfolio(Path(address): Path<String>) -> Json<UserPortfolio> {
-    // Placeholder - À remplacer par l'appel réel au service
+/// Get user's portfolio information
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/{address}/portfolio",
+    tag = "Users",
+    params(
+        ("address" = String, Path, description = "Ethereum address of the user")
+    ),
+    responses(
+        (status = 200, description = "User portfolio retrieved successfully", body = UserPortfolio)
+    )
+)]
+pub async fn get_user_portfolio(Path(address): Path<String>) -> Json<UserPortfolio> {
     Json(UserPortfolio {
         address,
         supplied_assets: vec![
@@ -68,8 +47,19 @@ async fn get_user_portfolio(Path(address): Path<String>) -> Json<UserPortfolio> 
     })
 }
 
-async fn get_user_health(Path(address): Path<String>) -> Json<HealthInfo> {
-    // Placeholder - À remplacer par l'appel réel au service
+/// Get user's health information
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/{address}/health",
+    tag = "Users",
+    params(
+        ("address" = String, Path, description = "Ethereum address of the user")
+    ),
+    responses(
+        (status = 200, description = "User health information retrieved successfully", body = HealthInfo)
+    )
+)]
+pub async fn get_user_health(Path(_address): Path<String>) -> Json<HealthInfo> {
     Json(HealthInfo {
         current: "1.8".to_string(),
         threshold: "1.0".to_string(),
@@ -77,8 +67,19 @@ async fn get_user_health(Path(address): Path<String>) -> Json<HealthInfo> {
     })
 }
 
-async fn get_user_history(Path(address): Path<String>) -> Json<Vec<Transaction>> {
-    // Placeholder - À remplacer par l'appel réel au service
+/// Get user's transaction history
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/{address}/history",
+    tag = "Users",
+    params(
+        ("address" = String, Path, description = "Ethereum address of the user")
+    ),
+    responses(
+        (status = 200, description = "User transaction history retrieved successfully", body = Vec<Transaction>)
+    )
+)]
+pub async fn get_user_history(Path(_address): Path<String>) -> Json<Vec<Transaction>> {
     Json(vec![
         Transaction {
             timestamp: 1680000000,
@@ -97,13 +98,35 @@ async fn get_user_history(Path(address): Path<String>) -> Json<Vec<Transaction>>
     ])
 }
 
-async fn get_user_current_health(Path(address): Path<String>) -> Json<String> {
-    // Placeholder - À remplacer par l'appel réel au service
+/// Get user's current health factor
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/{address}/health/current",
+    tag = "Users",
+    params(
+        ("address" = String, Path, description = "Ethereum address of the user")
+    ),
+    responses(
+        (status = 200, description = "User current health factor retrieved successfully", body = String)
+    )
+)]
+pub async fn get_user_current_health(Path(_address): Path<String>) -> Json<String> {
     Json("1.8".to_string())
 }
 
-async fn get_user_health_history(Path(address): Path<String>) -> Json<Vec<(u64, String)>> {
-    // Placeholder - Retourne un historique de health factor avec timestamp
+/// Get user's health factor history
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/{address}/health/history",
+    tag = "Users",
+    params(
+        ("address" = String, Path, description = "Ethereum address of the user")
+    ),
+    responses(
+        (status = 200, description = "User health factor history retrieved successfully", body = Vec<(u64, String)>)
+    )
+)]
+pub async fn get_user_health_history(Path(_address): Path<String>) -> Json<Vec<(u64, String)>> {
     Json(vec![
         (1680000000, "2.1".to_string()),
         (1680100000, "1.9".to_string()),

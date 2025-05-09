@@ -7,6 +7,7 @@ use sqlx::PgPool;
 use anyhow::Result;
 use crate::db::postgres::AssetRepository;
 use crate::db::models::Asset;
+use crate::api::models::MarketStats;
 
 pub fn router(pool: PgPool) -> Router {
     Router::new()
@@ -16,16 +17,34 @@ pub fn router(pool: PgPool) -> Router {
         .with_state(pool)
 }
 
-async fn get_market_stats() -> Json<serde_json::Value> {
-    // Pour l'instant, on garde des données factices pour cet endpoint
-    Json(serde_json::json!({
-        "total_supplied": "10000000",
-        "total_borrowed": "5000000",
-        "active_users": 1500
-    }))
+/// Get global market statistics
+#[utoipa::path(
+    get,
+    path = "/api/v1/market/stats",
+    tag = "Market",
+    responses(
+        (status = 200, description = "Market statistics retrieved successfully", body = MarketStats)
+    )
+)]
+pub async fn get_market_stats() -> Json<MarketStats> {
+    Json(MarketStats {
+        total_supplied: "10000000".to_string(),
+        total_borrowed: "5000000".to_string(),
+        active_users: 1500,
+    })
 }
 
-async fn get_market_assets(
+/// Get all available market assets
+#[utoipa::path(
+    get,
+    path = "/api/v1/market/assets",
+    tag = "Market",
+    responses(
+        (status = 200, description = "List of market assets retrieved successfully", body = Vec<Asset>),
+        (status = 500, description = "Internal server error")
+    )
+)]
+pub async fn get_market_assets(
     State(pool): State<PgPool>
 ) -> Result<Json<Vec<Asset>>, axum::http::StatusCode> {
     let repo = AssetRepository::new(pool);
@@ -39,9 +58,18 @@ async fn get_market_assets(
     }
 }
 
-async fn get_market_rates(
+/// Get current market rates for all assets
+#[utoipa::path(
+    get,
+    path = "/api/v1/market/rates",
+    tag = "Market",
+    responses(
+        (status = 200, description = "Market rates retrieved successfully", body = Vec<Asset>),
+        (status = 500, description = "Internal server error")
+    )
+)]
+pub async fn get_market_rates(
     State(pool): State<PgPool>
 ) -> Result<Json<Vec<Asset>>, axum::http::StatusCode> {
-    // Pour les taux, on utilise aussi les données des assets
     get_market_assets(State(pool)).await
 }
