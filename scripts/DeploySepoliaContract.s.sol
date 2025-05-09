@@ -1,4 +1,3 @@
-// scripts/DeploySepoliaContract.s.sol
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.29;
 
@@ -28,20 +27,16 @@ contract DeploySepoliaContract is Script {
 
         // 3. Configurer l'oracle dans la factory
         factory.setPriceOracle(address(oracle));
-
-        // 4. Configurer les price feeds pour ETH
-        address ethUsdFeed = 0x694AA1769357215DE4FAC081bf1f309aDC325306; // ETH/USD sur Sepolia
-        oracle.setPriceFeed(address(0), ethUsdFeed); // address(0) représente ETH
-
-        // 5. Créer une pool pour ETH
-        address ethPool = factory.createPool(
-            address(0),      // ETH
-            "Ethereum",      // Nom
-            "ETH",           // Symbole
-            15000            // Ratio de collatéral 150%
-        );
-        console.log("Pool ETH creee a:", ethPool);
+        console.log("Oracle configure dans la Factory");
 
         vm.stopBroadcast();
+
+        console.log("");
+        console.log("Deploiement termine. Addresses des contrats:");
+        console.log("Oracle:", address(oracle));
+        console.log("Factory:", address(factory));
+        console.log("");
+        console.log("Pour creer des pools, utilise ces commandes:");
+        console.log("ETH Pool: cast send $FACTORY \"createPool(address,string,string,uint256,address)\" 0x0 \"Ethereum\" \"ETH\" 15000 0x694AA1769357215DE4FAC081bf1f309aDC325306 --rpc-url $RPC_URL_SEPOLIA --private-key $PRIVATE_KEY");
     }
 }

@@ -17,12 +17,19 @@ contract PriceOracle is Ownable {
 
     event PriceFeedSet(address indexed asset, address indexed source);
 
+    mapping(address => bool) public authorizedCallers;
+
+    function authorizeCaller(address caller) external onlyOwner {
+        authorizedCallers[caller] = true;
+    }
+
     /**
      * @notice Définit ou met à jour le price feed pour un actif
      * @param asset Adresse du token (address(0) pour ETH)
      * @param priceFeed Adresse du price feed Chainlink
      */
-    function setPriceFeed(address asset, address priceFeed) external onlyOwner {
+    function setPriceFeed(address asset, address priceFeed) external {
+        require(msg.sender == owner() || authorizedCallers[msg.sender], "Not authorized");
         require(priceFeed != address(0), "Invalid price feed address");
         priceFeedSource[asset] = priceFeed;
         emit PriceFeedSet(asset, priceFeed);
@@ -50,9 +57,19 @@ contract PriceOracle is Ownable {
      * @param amount Montant de l'actif
      * @return La valeur en USD avec 8 décimales
      */
-    function assetToUsd(address asset, uint256 amount) external view returns (uint256) {
-        uint256 price = this.getAssetPrice(asset);
-        // Ajustement pour 18 décimales des jetons -> 8 décimales pour USD
-        return (amount * price) / 1e18;
-    }
+    function assetToUsd(address asset, uint256 amount) public view returns (uint256) {
+        require(asset != address(0), "Invalid asset address");
+        require(amount > 0, "Amount must be greater than 0");
+        
+        address feedAddress = priceFeedSource[asset];
+        require(feedAddress != address(0), "Price feed not found");
+        
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(feedAddress);
+        (, int256 price,,,) = priceFeed.latestRoundData();
+        require(price > 0, "Invalid price");
+        
+        // Ajuster l'ordre des opérations pour éviter les overflows
+        uint256 scaledAmount = (amount * uint256(price)) / 1e8;
+        return scaledAmount;
+    } 
 }
