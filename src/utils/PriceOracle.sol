@@ -58,7 +58,6 @@ contract PriceOracle is Ownable {
      * @return La valeur en USD avec 8 décimales
      */
     function assetToUsd(address asset, uint256 amount) public view returns (uint256) {
-        require(asset != address(0), "Invalid asset address");
         require(amount > 0, "Amount must be greater than 0");
         
         address feedAddress = priceFeedSource[asset];

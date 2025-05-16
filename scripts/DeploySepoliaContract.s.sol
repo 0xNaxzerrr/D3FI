@@ -4,39 +4,41 @@ pragma solidity ^0.8.29;
 import "forge-std/Script.sol";
 import "../src/core/LendingPoolFactory.sol";
 import "../src/utils/PriceOracle.sol";
+import "../src/core/InterestRateModel.sol";
 
 contract DeploySepoliaContract is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
 
-        console.log("Deploiement sur Sepolia avec l'adresse:", deployer);
-
-        // Vérification que nous sommes sur Sepolia (chainId 11155111)
         require(block.chainid == 11155111, "Ce script est concu pour Sepolia uniquement");
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // 1. Déployer l'oracle
+        // Déploiement des contrats
         PriceOracle oracle = new PriceOracle();
-        console.log("PriceOracle deploye a:", address(oracle));
+        InterestRateModel interestRateModel = new InterestRateModel(
+            1e16,  // baseRate: 1%
+            2e16,  // slopeRate1: 2%
+            4e16,  // slopeRate2: 4%
+            8e17,  // optimalUtilizationRate: 80%
+            5e15,  // minRate: 0.5%
+            2e17   // maxRate: 20%
+        );
+        
+        // Déploiement de la factory
+        LendingPoolFactory factory = new LendingPoolFactory(address(oracle));
 
-        // 2. Déployer la factory
-        LendingPoolFactory factory = new LendingPoolFactory();
-        console.log("LendingPoolFactory deploye a:", address(factory));
-
-        // 3. Configurer l'oracle dans la factory
-        factory.setPriceOracle(address(oracle));
-        console.log("Oracle configure dans la Factory");
+        // Autoriser la factory à appeler setPriceFeed sur l'oracle
+        oracle.authorizeCaller(address(factory));
 
         vm.stopBroadcast();
 
-        console.log("");
-        console.log("Deploiement termine. Addresses des contrats:");
+        console.log("Addresses des contrats deployes:");
         console.log("Oracle:", address(oracle));
+        console.log("InterestRateModel:", address(interestRateModel));
         console.log("Factory:", address(factory));
-        console.log("");
-        console.log("Pour creer des pools, utilise ces commandes:");
-        console.log("ETH Pool: cast send $FACTORY \"createPool(address,string,string,uint256,address)\" 0x0 \"Ethereum\" \"ETH\" 15000 0x694AA1769357215DE4FAC081bf1f309aDC325306 --rpc-url $RPC_URL_SEPOLIA --private-key $PRIVATE_KEY");
+        console.log("\nCommande pour creer un pool ETH:");
+        console.log("cast send $FACTORY \"createPool(address,string,string,uint256,address)\" 0x0 \"Ethereum\" \"ETH\" 15000 0x694AA1769357215DE4FAC081bf1f309aDC325306 --rpc-url $RPC_URL_SEPOLIA --private-key $PRIVATE_KEY");
     }
 }

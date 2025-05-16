@@ -42,8 +42,8 @@ contract LendingPoolFactoryTest is Test {
         mockPriceFeed.setPrice(1e8); // 1 USD
 
         // Mint des tokens pour les tests
-        mockToken.mint(alice, 2000e18);
-        mockToken.mint(bob, 2000e18);
+        mockToken.mint(alice, 2_000_000e18);
+        mockToken.mint(bob, 2_000_000e18);
 
         // Labels pour le debug
         vm.label(address(factory), "Factory");
@@ -67,38 +67,58 @@ contract LendingPoolFactoryTest is Test {
     }
 
     function testProtocolFees() public {
-        (LendingPool _pool, CToken _cToken) = _createPool();
+        // Create a pool
+        address payable poolAddress = payable(factory.createPool(
+            address(mockToken),
+            "Mock Token",
+            "MTK",
+            15000,
+            address(mockPriceFeed)
+        ));
+        LendingPool pool = LendingPool(poolAddress);
+        CToken cToken = CToken(pool.cToken());
 
-        // Alice dépose
+        // Register price feed for cToken
+        oracle.setPriceFeed(address(cToken), address(mockPriceFeed));
+
+        // Alice deposits tokens for liquidity
         vm.startPrank(alice);
-        mockToken.approve(address(_pool), 1000e18);
-        _pool.deposit(1000e18);
+        mockToken.approve(address(pool), 1_000_000e18);
+        pool.deposit(1_000_000e18);
         vm.stopPrank();
 
-        // Bob dépose et fournit du collatéral
+        // Bob borrows to generate fees
         vm.startPrank(bob);
-        mockToken.approve(address(_pool), 1000e18);
-        _pool.deposit(1000e18);
-        _cToken.approve(address(_pool), 500e18);
-        _pool.supplyCollateral(500e18);
-        // Bob emprunte (génère des frais)
-        _pool.borrow(200e18);
+        mockToken.approve(address(pool), 1_000_000e18);
+        pool.deposit(1_000_000e18);
+        cToken.approve(address(pool), 500_000e18);
+        pool.supplyCollateral(500_000e18);
+        pool.borrow(100_000e18);
         vm.stopPrank();
 
-        // Vérifier les frais accumulés dans la pool
-        uint256 protocolFees = _pool.protocolFees();
-        // Correction : la valeur dépend de la logique du contrat (0.5% de 200e18 = 1e18 ou 10000)
-        assertTrue(protocolFees > 0);
+        // Calculate expected fees (0.5% of 100_000e18)
+        uint256 expectedFees = (100_000e18 * factory.getProtocolFeeRate()) / 10000;
+        assertEq(pool.protocolFees(), expectedFees, "Incorrect fees");
+
+        // Collect fees as factory owner
+        vm.startPrank(address(factory));
+        pool.collectProtocolFees();
+        assertEq(pool.protocolFees(), 0, "Fees not collected");
+        assertEq(mockToken.balanceOf(address(factory)), expectedFees, "Fees not transferred to owner");
+        vm.stopPrank();
     }
 
     function testCollectAllProtocolFees() public {
-        (LendingPool _pool1, CToken _cToken1) = _createPool();
-
-        // Créer un nouveau token pour la deuxième pool
+        // Create two pools with different tokens
         MockERC20 mockToken2 = new MockERC20("Mock Token 2", "MTK2");
-        mockToken2.mint(alice, 1000e18);
-        mockToken2.mint(bob, 1000e18);
+        mockToken2.mint(alice, 2_000_000e18);
+        mockToken2.mint(bob, 2_000_000e18);
         oracle.setPriceFeed(address(mockToken2), address(mockPriceFeed));
+
+        // Create first pool
+        (LendingPool pool1, CToken cToken1) = _createPool();
+        
+        // Create second pool with different token
         address payable poolAddress2 = payable(factory.createPool(
             address(mockToken2),
             "Mock Token 2",
@@ -106,39 +126,48 @@ contract LendingPoolFactoryTest is Test {
             15000,
             address(mockPriceFeed)
         ));
-        LendingPool _pool2 = LendingPool(poolAddress2);
-        CToken _cToken2 = CToken(_pool2.cToken());
-        oracle.setPriceFeed(address(_cToken2), address(mockPriceFeed));
+        LendingPool pool2 = LendingPool(poolAddress2);
+        CToken cToken2 = CToken(pool2.cToken());
+        oracle.setPriceFeed(address(cToken2), address(mockPriceFeed));
 
-        // Générer des frais dans les deux pools
+        // Alice deposits in both pools
         vm.startPrank(alice);
-        mockToken.approve(address(_pool1), 1000e18);
-        _pool1.deposit(1000e18);
-        mockToken2.approve(address(_pool2), 1000e18);
-        _pool2.deposit(1000e18);
+        mockToken.approve(address(pool1), 1_000_000e18);
+        mockToken2.approve(address(pool2), 1_000_000e18);
+        pool1.deposit(1_000_000e18);
+        pool2.deposit(1_000_000e18);
         vm.stopPrank();
 
+        // Bob borrows from both pools
         vm.startPrank(bob);
-        mockToken.approve(address(_pool1), 1000e18);
-        _pool1.deposit(1000e18);
-        _cToken1.approve(address(_pool1), 500e18);
-        _pool1.supplyCollateral(500e18);
-        _pool1.borrow(200e18);
-
-        mockToken2.approve(address(_pool2), 1000e18);
-        _pool2.deposit(1000e18);
-        _cToken2.approve(address(_pool2), 500e18);
-        _pool2.supplyCollateral(500e18);
-        vm.expectRevert("Borrow limit exceeded");
-        _pool2.borrow(200e18);
+        mockToken.approve(address(pool1), 1_000_000e18);
+        mockToken2.approve(address(pool2), 1_000_000e18);
+        pool1.deposit(1_000_000e18);
+        pool2.deposit(1_000_000e18);
+        cToken1.approve(address(pool1), 500_000e18);
+        cToken2.approve(address(pool2), 500_000e18);
+        pool1.supplyCollateral(500_000e18);
+        pool2.supplyCollateral(500_000e18);
+        pool1.borrow(50_000e18);
+        pool2.borrow(50_000e18);
         vm.stopPrank();
 
-        _pool1.transferOwnership(address(factory));
-        _pool2.transferOwnership(address(factory));
-        factory.collectAllProtocolFees();
+        // Calculate expected fees
+        uint256 expectedFees1 = (50_000e18 * factory.getProtocolFeeRate()) / 10000;
+        uint256 expectedFees2 = (50_000e18 * factory.getProtocolFeeRate()) / 10000;
 
-        assertEq(_pool1.protocolFees(), 0);
-        assertEq(_pool2.protocolFees(), 0);
+        // Check accumulated fees
+        assertEq(pool1.protocolFees(), expectedFees1, "Incorrect fees for pool1");
+        assertEq(pool2.protocolFees(), expectedFees2, "Incorrect fees for pool2");
+
+        // Collect all fees as factory owner
+        vm.startPrank(address(this)); // Test contract is factory owner
+        factory.collectAllProtocolFees();
+        assertEq(pool1.protocolFees(), 0, "Fees not collected from pool1");
+        assertEq(pool2.protocolFees(), 0, "Fees not collected from pool2");
+        assertEq(mockToken.balanceOf(address(factory)), expectedFees1, "Fees not transferred to owner for pool1");
+        assertEq(mockToken2.balanceOf(address(factory)), expectedFees2, "Fees not transferred to owner for pool2");
+        vm.stopPrank();
     }
 
     function testOnlyOwnerCanCollectAllFees() public {
@@ -184,14 +213,20 @@ contract LendingPoolFactoryTest is Test {
         _cToken.approve(address(_pool), 500e18);
         _pool.supplyCollateral(500e18);
         _pool.borrow(200e18);
+
+        // Calculate expected fees for borrow
+        uint256 borrowFees = (200e18 * _pool.protocolFeeRate()) / 10000;
+        assertEq(_pool.protocolFees(), borrowFees, "Incorrect borrow fees");
+
         // Bob rembourse
         mockToken.approve(address(_pool), type(uint256).max);
         _pool.repay(200e18);
-        vm.stopPrank();
 
-        // Vérifier les frais accumulés dans la pool
-        uint256 protocolFees = _pool.protocolFees();
-        assertTrue(protocolFees >= 0);
+        // Calculate expected fees for repayment
+        uint256 repayFees = (200e18 * _pool.protocolFeeRate()) / 10000;
+        uint256 totalExpectedFees = borrowFees + repayFees;
+        assertEq(_pool.protocolFees(), totalExpectedFees, "Incorrect total fees");
+        vm.stopPrank();
     }
 
     function testCreateEthPool() public {
@@ -261,7 +296,7 @@ contract LendingPoolFactoryTest is Test {
         assertEq(poolAddress, address(_pool));
     }
 
-    function testGetPoolNonExistent() public {
+    function testGetPoolNonExistent() public view {
         address poolAddress = factory.getPool(address(0x123));
         assertEq(poolAddress, address(0));
     }
@@ -287,7 +322,7 @@ contract LendingPoolFactoryTest is Test {
         assertEq(pools[1], address(_pool2));
     }
 
-    function testGetAllPoolsEmpty() public {
+    function testGetAllPoolsEmpty() public view {
         address[] memory pools = factory.getAllPools();
         assertEq(pools.length, 0);
     }

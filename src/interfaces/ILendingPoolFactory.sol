@@ -12,18 +12,15 @@ interface ILendingPoolFactory {
     function assetToPools(address) external view returns (address);
     function priceOracle() external view returns (address);
     function protocolFeeRate() external view returns (uint256);
-    function totalProtocolFees() external view returns (uint256);
 
     // Événements
     event PoolCreated(address indexed asset, address indexed pool, address cToken, string name, string symbol);
     event ProtocolFeeRateUpdated(uint256 newRate);
     event ProtocolFeesCollected(uint256 amount);
-    event PriceOracleSet(address indexed oracle);
 
     // Fonctions de gestion des frais
     function updateProtocolFeeRate(uint256 _newRate) external;
-    function collectProtocolFees() external;
-    function getTotalProtocolFees() external view returns (uint256);
+    function collectAllProtocolFees() external;
     function getProtocolFeeRate() external view returns (uint256);
 
     // Fonctions existantes
@@ -35,11 +32,8 @@ interface ILendingPoolFactory {
         address priceFeed
     ) external returns (address);
     
-    function setPriceOracle(address _priceOracle) external;
     function getPool(address asset) external view returns (address);
     function getAllPools() external view returns (address[] memory);
     function getPoolCount() external view returns (uint256);
-    function addProtocolFees(uint256 amount) external;
-
     function getUserPools(address user) external view returns (LendingPool[] memory);
 }

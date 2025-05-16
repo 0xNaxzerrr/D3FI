@@ -50,6 +50,7 @@ contract LendingPool is ReentrancyGuard, Ownable {
     event CollateralWithdrawn(address indexed user, uint256 amount);
     event Borrowed(address indexed user, uint256 amount, uint256 protocolFee);
     event Repaid(address indexed user, uint256 amount, uint256 protocolFee);
+    event ProtocolFeesAccumulated(uint256 amount, uint256 totalFees);
 
     // Constantes pour le health factor
     uint256 public constant HEALTH_FACTOR_PRECISION = 1e18;
@@ -83,8 +84,8 @@ contract LendingPool is ReentrancyGuard, Ownable {
         // Initialiser avec un taux par défaut
         currentInterestRate = 500; // 5%
 
-        // Transférer la propriété au propriétaire de la Factory
-        _transferOwnership(Ownable(msg.sender).owner());
+        // Transférer la propriété à la factory elle-même
+        _transferOwnership(msg.sender);
 
         emit PoolInitialized(_asset, _cToken, _interestRateModel);
     }
@@ -162,12 +163,13 @@ contract LendingPool is ReentrancyGuard, Ownable {
      * @return Montant des frais
      */
     function _calculateProtocolFee(uint256 amount) internal view returns (uint256) {
-        return (amount * protocolFeeRate) / 1e18;
+        return (amount * protocolFeeRate) / 10000; // Utilisation de base points (10000 = 100%)
     }
 
     function _addProtocolFees(uint256 amount) internal {
         if (amount > 0) {
             protocolFees += amount;
+            emit ProtocolFeesAccumulated(amount, protocolFees);
         }
     }
 
@@ -183,6 +185,7 @@ contract LendingPool is ReentrancyGuard, Ownable {
             require(msg.value == amount, "Incorrect ETH value");
         } else {
             require(msg.value == 0, "ETH not accepted for ERC20 deposit");
+            require(IERC20(asset).allowance(msg.sender, address(this)) >= amount, "Insufficient allowance");
             IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
         }
 
@@ -360,10 +363,10 @@ contract LendingPool is ReentrancyGuard, Ownable {
         totalBorrows += amount;
         userBorrows[msg.sender] += amount;
 
-        // Ajouter les frais du protocole
+        // Accumuler les frais au lieu de les transférer immédiatement
         _addProtocolFees(protocolFee);
 
-        // Transférer les fonds
+        // Transférer les tokens à l'emprunteur
         if (asset == address(0)) {
             require(msg.value >= totalAmount, "Insufficient ETH sent");
             (bool success, ) = msg.sender.call{value: amount}("");
@@ -373,7 +376,7 @@ contract LendingPool is ReentrancyGuard, Ownable {
                 require(success, "ETH refund failed");
             }
         } else {
-            IERC20(asset).transfer(msg.sender, amount);
+            IERC20(asset).safeTransfer(msg.sender, amount);
         }
 
         emit Borrowed(msg.sender, amount, protocolFee);
@@ -394,9 +397,9 @@ contract LendingPool is ReentrancyGuard, Ownable {
         // Mettre à jour les emprunts
         userBorrows[msg.sender] -= amount;
         totalBorrows -= amount;
-        
-        // Ajouter les frais au total des frais du protocole
-        protocolFees += protocolFee;
+
+        // Accumuler les frais au lieu de les transférer immédiatement
+        _addProtocolFees(protocolFee);
 
         // Transférer les fonds
         if (asset == address(0)) {

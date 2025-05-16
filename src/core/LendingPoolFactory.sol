@@ -8,12 +8,16 @@ import "../tokens/CToken.sol";
 import "../core/InterestRateModel.sol";
 import "../utils/PriceOracle.sol";
 import "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+import "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title LendingPoolFactory
  * @notice Permet aux admins de créer des pools de prêt pour différents actifs
  */
 contract LendingPoolFactory is ILendingPoolFactory, Ownable {
+    using SafeERC20 for IERC20;
+
     // Mapping des actifs vers leurs pools
     mapping(address => address) public override assetToPools;
     
@@ -23,14 +27,12 @@ contract LendingPoolFactory is ILendingPoolFactory, Ownable {
     // Oracle de prix
     address public override priceOracle;
     
-    // Gestion des frais du protocole
+    // Taux de frais du protocole
     uint256 public override protocolFeeRate = 50; // 0.5% par défaut
-    uint256 public override totalProtocolFees;
 
     constructor(address _priceOracle) {
         require(_priceOracle != address(0), "Invalid oracle address");
         priceOracle = _priceOracle;
-        protocolFeeRate = 50; // 0.5% par défaut
     }
 
     /**
@@ -44,27 +46,6 @@ contract LendingPoolFactory is ILendingPoolFactory, Ownable {
     }
 
     /**
-     * @notice Récupère tous les frais accumulés du protocole
-     */
-    function collectProtocolFees() external override onlyOwner {
-        require(totalProtocolFees > 0, "No fees to collect");
-        uint256 amount = totalProtocolFees;
-        totalProtocolFees = 0;
-
-        (bool success, ) = owner().call{value: amount}("");
-        require(success, "ETH transfer failed");
-
-        emit ProtocolFeesCollected(amount);
-    }
-
-    /**
-     * @notice Récupère le total des frais accumulés
-     */
-    function getTotalProtocolFees() external view override returns (uint256) {
-        return totalProtocolFees;
-    }
-
-    /**
      * @notice Récupère le taux de frais actuel
      */
     function getProtocolFeeRate() external view override returns (uint256) {
@@ -72,39 +53,20 @@ contract LendingPoolFactory is ILendingPoolFactory, Ownable {
     }
 
     /**
-     * @notice Ajoute des frais au total
-     * @param amount Montant des frais à ajouter
+     * @notice Collecte les frais de toutes les pools
      */
-    function addProtocolFees(uint256 amount) external {
-        // Permettre à la factory elle-même d'ajouter des frais
-        if (msg.sender == address(this)) {
-            totalProtocolFees += amount;
-            return;
-        }
-
-        // Permettre aux pools enregistrées d'ajouter des frais
-        require(_isPool(msg.sender), "Not authorized");
-        totalProtocolFees += amount;
-    }
-
-    // Fonction interne pour vérifier si une adresse est une pool
-    function _isPool(address poolAddress) internal view returns (bool) {
+    function collectAllProtocolFees() external onlyOwner {
+        uint256 totalFees = 0;
         for (uint256 i = 0; i < _pools.length; i++) {
-            if (_pools[i] == poolAddress) {
-                return true;
+            LendingPool pool = LendingPool(payable(_pools[i]));
+            uint256 fees = pool.protocolFees();
+            if (fees > 0) {
+                pool.collectProtocolFees();
+                totalFees += fees;
             }
         }
-        return false;
-    }
-
-    /**
-     * @notice Définit l'oracle de prix
-     * @param _priceOracle Adresse du contrat oracle
-     */
-    function setPriceOracle(address _priceOracle) external onlyOwner {
-        require(_priceOracle != address(0), "Invalid oracle address");
-        priceOracle = _priceOracle;
-        emit PriceOracleSet(_priceOracle);
+        require(totalFees > 0, "No fees to collect");
+        emit ProtocolFeesCollected(totalFees);
     }
 
     /**
@@ -122,7 +84,6 @@ contract LendingPoolFactory is ILendingPoolFactory, Ownable {
         uint256 _collateralRatio,
         address _priceFeed
     ) external onlyOwner returns (address) {
-        require(_asset != address(0) || _asset == address(0), "Invalid asset address");
         require(_collateralRatio >= 10000, "Collateral ratio must be >= 100%");
         require(_priceFeed != address(0), "Price feed address cannot be zero");
         require(assetToPools[_asset] == address(0), "Pool already exists for this asset");
@@ -132,6 +93,9 @@ contract LendingPoolFactory is ILendingPoolFactory, Ownable {
 
         // Créer le CToken
         CToken newCToken = new CToken(_name, _symbol, _asset);
+        
+        // Enregistrer automatiquement le price feed pour le cToken
+        PriceOracle(priceOracle).setPriceFeed(address(newCToken), _priceFeed);
         
         // Créer le modèle de taux d'intérêt avec les paramètres par défaut
         InterestRateModel newInterestRateModel = new InterestRateModel(
@@ -159,9 +123,6 @@ contract LendingPoolFactory is ILendingPoolFactory, Ownable {
         assetToPools[_asset] = address(newPool);
         _pools.push(address(newPool));
         
-        // Enregistrer le price feed
-        PriceOracle(priceOracle).setPriceFeed(_asset, _priceFeed);
-
         emit PoolCreated(_asset, address(newPool), address(newCToken), _name, _symbol);
 
         return address(newPool);
@@ -189,23 +150,6 @@ contract LendingPoolFactory is ILendingPoolFactory, Ownable {
         return _pools.length;
     }
 
-    function collectAllProtocolFees() external onlyOwner {
-        uint256 totalFees = 0;
-        for (uint256 i = 0; i < _pools.length; i++) {
-            LendingPool pool = LendingPool(payable(_pools[i]));
-            // Vérifier que la pool appartient à la factory
-            require(pool.owner() == address(this), "Pool not owned by factory");
-            uint256 fees = pool.protocolFees();
-            if (fees > 0) {
-                pool.collectProtocolFees();
-                totalFees += fees;
-            }
-        }
-        require(totalFees > 0, "No fees to collect");
-        totalProtocolFees += totalFees;
-        emit ProtocolFeesCollected(totalFees);
-    }
-
     function getUserPools(address user) external view returns (LendingPool[] memory) {
         LendingPool[] memory userPools = new LendingPool[](_pools.length);
         uint256 count = 0;
@@ -225,4 +169,27 @@ contract LendingPoolFactory is ILendingPoolFactory, Ownable {
 
         return userPools;
     }
+
+    /**
+     * @notice Transfère les frais collectés de la factory vers l'owner
+     * @param token Adresse du token à transférer (address(0) pour ETH)
+     */
+    function withdrawFees(address token) external onlyOwner {
+        if (token == address(0)) {
+            uint256 ethBalance = address(this).balance;
+            require(ethBalance > 0, "No ETH fees to withdraw");
+            (bool success, ) = owner().call{value: ethBalance}("");
+            require(success, "ETH transfer failed");
+            emit FeesWithdrawn(token, ethBalance);
+        } else {
+            uint256 tokenBalance = IERC20(token).balanceOf(address(this));
+            require(tokenBalance > 0, "No token fees to withdraw");
+            IERC20(token).safeTransfer(owner(), tokenBalance);
+            emit FeesWithdrawn(token, tokenBalance);
+        }
+    }
+
+    // Événement pour le suivi des retraits de frais
+    event FeesWithdrawn(address indexed token, uint256 amount);
 }
+
