@@ -8,13 +8,13 @@ use utoipa::ToSchema;
 
 pub fn router() -> Router {
     Router::new()
-        .route("/api/v1/health", get(health_check))
+        .route("/health", get(health_check))
 }
 
 /// Check the health status of the API
 #[utoipa::path(
     get,
-    path = "/api/v1/health",
+    path = "/health",
     tag = "Health",
     responses(
         (status = 200, description = "API health status", body = HealthResponse)
