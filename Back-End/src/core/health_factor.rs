@@ -1,28 +1,32 @@
-use std::collections::HashMap;
+use crate::api::ws::WsState;
+use crate::core::price_ws_service::PriceWebSocketService;
+use crate::db::models::SuppliedPosition;
+use crate::db::postgres::{AssetRepository, PositionRepository};
 use anyhow::Result;
+use bigdecimal::BigDecimal;
 use sqlx::PgPool;
-use sqlx::types::BigDecimal;
-use rust_decimal::Decimal;
+use std::collections::HashMap;
 use std::str::FromStr;
-use crate::db::postgres::{PositionRepository, AssetRepository};
-use crate::db::models::{SuppliedPosition, BorrowedPosition};
-use crate::core::PriceService;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{error, info, warn};
 
-// Seuils pour le health factor
+// Seuils de health factor
 pub const HEALTH_FACTOR_LIQUIDATION_THRESHOLD: &str = "1.0";
 pub const HEALTH_FACTOR_WARNING_THRESHOLD: &str = "1.2";
 
-// Structure pour stocker les informations du health factor d'un utilisateur
+// Structure pour stocker les informations de health factor d'un utilisateur
 #[derive(Debug, Clone)]
 pub struct UserHealthFactor {
     pub address: String,
     pub health_factor: BigDecimal,
     pub status: HealthFactorStatus,
-    pub collateral_value: BigDecimal,
-    pub borrowed_value: BigDecimal,
+    pub total_collateral_value: BigDecimal,
+    pub total_borrowed_value: BigDecimal,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+// États possibles du health factor
+#[derive(Debug, Clone)]
 pub enum HealthFactorStatus {
     Safe,
     Warning,
@@ -31,15 +35,16 @@ pub enum HealthFactorStatus {
 
 impl HealthFactorStatus {
     pub fn from_health_factor(health_factor: &BigDecimal) -> Self {
-        let liquidation = BigDecimal::from_str(HEALTH_FACTOR_LIQUIDATION_THRESHOLD).unwrap();
-        let warning = BigDecimal::from_str(HEALTH_FACTOR_WARNING_THRESHOLD).unwrap();
-        
-        if health_factor < &liquidation {
-            Self::Liquidation
-        } else if health_factor < &warning {
-            Self::Warning
+        let liquidation_threshold =
+            BigDecimal::from_str(HEALTH_FACTOR_LIQUIDATION_THRESHOLD).unwrap();
+        let warning_threshold = BigDecimal::from_str(HEALTH_FACTOR_WARNING_THRESHOLD).unwrap();
+
+        if health_factor <= &liquidation_threshold {
+            HealthFactorStatus::Liquidation
+        } else if health_factor <= &warning_threshold {
+            HealthFactorStatus::Warning
         } else {
-            Self::Safe
+            HealthFactorStatus::Safe
         }
     }
 }
@@ -47,108 +52,257 @@ impl HealthFactorStatus {
 // Service de gestion du health factor
 pub struct HealthFactorService {
     pool: PgPool,
-    price_service: std::sync::Arc<PriceService>,
+    price_ws_service: Arc<PriceWebSocketService>,
+    ws_state: Option<WsState>,
+    users_health_factor: Arc<RwLock<HashMap<String, UserHealthFactor>>>,
 }
 
 impl HealthFactorService {
-    pub fn new(pool: PgPool, price_service: std::sync::Arc<PriceService>) -> Self {
-        Self { pool, price_service }
+    pub fn new(pool: PgPool, price_ws_service: Arc<PriceWebSocketService>) -> Self {
+        Self {
+            pool,
+            price_ws_service,
+            ws_state: None,
+            users_health_factor: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
-    
-    // Calculer le health factor pour tous les utilisateurs et retourner ceux qui sont à risque
-    pub async fn check_all_users_health_factors(&self) -> Result<Vec<UserHealthFactor>> {
-        let position_repo = PositionRepository::new(self.pool.clone());
-        let asset_repo = AssetRepository::new(self.pool.clone());
-        let user_repo = crate::db::postgres::UserRepository::new(self.pool.clone());
-        
-        let users = user_repo.get_all_users().await?;
-        let mut at_risk_users = Vec::new();
-        
-        for user in users {
-            let health_factor = self.calculate_user_health_factor(&user.address).await?;
-            
-            // Si le health factor est sous le warning threshold ou liquidation threshold
-            if health_factor.status != HealthFactorStatus::Safe {
-                // Sauvegarder l'historique du health factor
-                position_repo.save_health_factor(&user.address, health_factor.health_factor.clone()).await?;
-                
-                // Ajouter l'utilisateur à la liste des utilisateurs à risque
-                at_risk_users.push(health_factor);
+
+    pub fn with_ws_state(mut self, ws_state: WsState) -> Self {
+        self.ws_state = Some(ws_state);
+        self
+    }
+
+    // Méthode principale pour vérifier périodiquement les health factors
+    pub async fn start_monitoring(&self) {
+        let users_health_factor = Arc::clone(&self.users_health_factor);
+        let pool = self.pool.clone();
+        let price_ws_service = Arc::clone(&self.price_ws_service);
+        let ws_state = self.ws_state.clone();
+
+        // Démarrer une tâche en arrière-plan pour surveiller les health factors
+        tokio::spawn(async move {
+            loop {
+                // Vérifier les health factors toutes les 10 secondes
+                match Self::check_all_users_health_factors(
+                    &pool,
+                    &price_ws_service,
+                    &users_health_factor,
+                )
+                .await
+                {
+                    Ok(results) => {
+                        for user_hf in results {
+                            // Traiter les résultats selon le statut
+                            match user_hf.status {
+                                HealthFactorStatus::Liquidation => {
+                                    // Alerter et déclencher la liquidation
+                                    info!(
+                                        "LIQUIDATION: Utilisateur {} a un health factor de {}",
+                                        user_hf.address, user_hf.health_factor
+                                    );
+
+                                    // Envoyer une alerte via WebSocket si configuré
+                                    if let Some(ws) = &ws_state {
+                                        let tx_hash = Self::liquidate_user(&user_hf.address).await;
+                                        if let Ok(hash) = tx_hash {
+                                            crate::api::ws::broadcast_liquidation(
+                                                ws,
+                                                user_hf.address.clone(),
+                                                hash,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+                                HealthFactorStatus::Warning => {
+                                    // Alerter sur un health factor faible
+                                    warn!(
+                                        "WARNING: Utilisateur {} a un health factor de {}",
+                                        user_hf.address, user_hf.health_factor
+                                    );
+
+                                    // Envoyer une alerte via WebSocket si configuré
+                                    if let Some(ws) = &ws_state {
+                                        crate::api::ws::broadcast_health_factor_warning(
+                                            ws,
+                                            user_hf.address.clone(),
+                                            user_hf.health_factor.to_string(),
+                                            HEALTH_FACTOR_WARNING_THRESHOLD.to_string(),
+                                        )
+                                        .await;
+                                    }
+                                }
+                                HealthFactorStatus::Safe => {
+                                    // Tout va bien, rien à faire
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Erreur lors de la vérification des health factors: {}", e);
+                    }
+                }
+
+                // Attendre avant la prochaine vérification
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
             }
-        }
-        
-        Ok(at_risk_users)
+        });
     }
-    
-    // Calculer le health factor pour un utilisateur spécifique
-    pub async fn calculate_user_health_factor(&self, address: &str) -> Result<UserHealthFactor> {
-        let position_repo = PositionRepository::new(self.pool.clone());
-        
-        // Récupérer les positions de l'utilisateur
-        let supplied_positions = position_repo.get_user_supplied_positions(address).await?;
-        let borrowed_positions = position_repo.get_user_borrowed_positions(address).await?;
-        
-        // Si l'utilisateur n'a pas de positions, retourner un health factor par défaut
-        if supplied_positions.is_empty() && borrowed_positions.is_empty() {
-            return Ok(UserHealthFactor {
-                address: address.to_string(),
-                health_factor: BigDecimal::from_str("0.0")?,
-                status: HealthFactorStatus::Safe,
-                collateral_value: BigDecimal::from_str("0.0")?,
-                borrowed_value: BigDecimal::from_str("0.0")?,
-            });
-        }
-        
-        // Calculer la valeur du collatéral
-        let mut collateral_value = BigDecimal::from_str("0.0")?;
-        for position in &supplied_positions {
-            if position.collateral {
-                if let Some(price) = self.price_service.get_price(&self.get_asset_symbol(position.asset_id).await?).await {
-                    let position_value = &position.amount * &price;
-                    collateral_value = &collateral_value + &position_value;
+
+    // Vérifier les health factors de tous les utilisateurs
+    pub async fn check_all_users_health_factors(
+        pool: &PgPool,
+        price_ws_service: &PriceWebSocketService,
+        users_health_factor: &Arc<RwLock<HashMap<String, UserHealthFactor>>>,
+    ) -> Result<Vec<UserHealthFactor>> {
+        let position_repo = PositionRepository::new(pool.clone());
+
+        // Récupérer tous les utilisateurs avec des positions
+        let users = position_repo.get_all_users_with_positions().await?;
+        let mut results = Vec::new();
+
+        for user_address in users {
+            match Self::calculate_user_health_factor(pool, price_ws_service, &user_address).await {
+                Ok(health_factor) => {
+                    // Mettre à jour le cache
+                    users_health_factor
+                        .write()
+                        .await
+                        .insert(user_address.clone(), health_factor.clone());
+                    results.push(health_factor);
+                }
+                Err(e) => {
+                    error!(
+                        "Erreur lors du calcul du health factor pour {}: {}",
+                        user_address, e
+                    );
                 }
             }
         }
+
+        Ok(results)
+    }
+
+    // Méthode publique pour accéder aux résultats de la vérification
+    pub async fn get_all_users_health_factors(&self) -> Result<Vec<UserHealthFactor>> {
+        Self::check_all_users_health_factors(
+            &self.pool,
+            &self.price_ws_service,
+            &self.users_health_factor,
+        )
+        .await
+    }
+
+    // Calculer le health factor d'un utilisateur spécifique
+    pub async fn calculate_user_health_factor(
+        pool: &PgPool,
+        price_ws_service: &PriceWebSocketService,
+        address: &str
+    ) -> Result<UserHealthFactor> {
+        let position_repo = PositionRepository::new(pool.clone());
+        let asset_repo = AssetRepository::new(pool.clone());
         
-        // Calculer la valeur empruntée
-        let mut borrowed_value = BigDecimal::from_str("0.0")?;
-        for position in &borrowed_positions {
-            if let Some(price) = self.price_service.get_price(&self.get_asset_symbol(position.asset_id).await?).await {
-                let position_value = &position.amount * &price;
-                borrowed_value = &borrowed_value + &position_value;
-            }
+        // Récupérer les positions fournies (collatérales)
+        let supplied_positions = position_repo.get_user_supplied_positions(address).await?;
+        let supplied_collateral_positions: Vec<&SuppliedPosition> = supplied_positions
+            .iter()
+            .filter(|pos| pos.collateral)
+            .collect();
+        
+        // Récupérer les positions empruntées
+        let borrowed_positions = position_repo.get_user_borrowed_positions(address).await?;
+        
+        // Calculer la valeur totale du collatéral
+        let mut total_collateral_value = BigDecimal::from_str("0").unwrap();
+        for position in &supplied_collateral_positions {
+            // Récupérer l'actif par son ID
+            let asset = match asset_repo.get_asset_by_id(position.asset_id).await? {
+                Some(a) => a,
+                None => {
+                    error!("Asset non trouvé pour l'ID: {}", position.asset_id);
+                    continue;
+                }
+            };
+            
+            // Utiliser le prix en temps réel si disponible
+            let asset_price = if let Some(price_update) = price_ws_service.get_current_price(&asset.symbol).await {
+                BigDecimal::from_str(&price_update.price.to_string()).unwrap_or(asset.price.clone())
+            } else {
+                asset.price.clone()
+            };
+            
+            let position_value = &position.amount * &asset_price;
+            total_collateral_value = total_collateral_value + position_value;
         }
         
+        // Calculer la valeur totale empruntée
+        let mut total_borrowed_value = BigDecimal::from_str("0").unwrap();
+        for position in &borrowed_positions {
+            let asset = match asset_repo.get_asset_by_id(position.asset_id).await? {
+                Some(a) => a,
+                None => {
+                    error!("Asset non trouvé pour l'ID: {}", position.asset_id);
+                    continue;
+                }
+            };
+            
+            // Utiliser le prix en temps réel si disponible
+            let asset_price = if let Some(price_update) = price_ws_service.get_current_price(&asset.symbol).await {
+                BigDecimal::from_str(&price_update.price.to_string()).unwrap_or(asset.price.clone())
+            } else {
+                asset.price.clone()
+            };
+            
+            let position_value = &position.amount * &asset_price;
+            total_borrowed_value = total_borrowed_value + position_value;
+        }
+
         // Calculer le health factor
-        let health_factor = if borrowed_value > BigDecimal::from_str("0.0")? {
-            &collateral_value / &borrowed_value
+        let health_factor = if total_borrowed_value > BigDecimal::from_str("0").unwrap() {
+            total_collateral_value.clone() / total_borrowed_value.clone()
         } else {
-            // Si l'utilisateur n'a pas d'emprunts, son health factor est "infini" (mettons une valeur très élevée)
-            BigDecimal::from_str("100.0")?
+            // Si rien n'est emprunté, le health factor est considéré comme "infini"
+            // On utilise une valeur arbitrairement élevée
+            BigDecimal::from_str("1000").unwrap()
         };
-        
+
+        // Déterminer le statut
         let status = HealthFactorStatus::from_health_factor(&health_factor);
-        
+
+        // Enregistrer le health factor dans l'historique
+        let _ = position_repo.save_health_factor(address, health_factor.clone()).await;
+
         Ok(UserHealthFactor {
             address: address.to_string(),
             health_factor,
             status,
-            collateral_value,
-            borrowed_value,
+            total_collateral_value,
+            total_borrowed_value,
         })
     }
-    
-    // Récupérer le symbole d'un asset à partir de son ID
-    async fn get_asset_symbol(&self, asset_id: uuid::Uuid) -> Result<String> {
-        let asset_repo = AssetRepository::new(self.pool.clone());
-        let assets = asset_repo.get_all_assets().await?;
+
+    // Appeler le smart contract pour liquider un utilisateur
+    async fn liquidate_user(user_address: &str) -> Result<String> {
+        // Vérifier si l'utilisateur a déjà été liquidé
+        let pool = sqlx::Pool::connect(&std::env::var("DATABASE_URL").unwrap()).await?;
+        let position_repo = PositionRepository::new(pool.clone());
         
-        for asset in assets {
-            if asset.id == asset_id {
-                return Ok(asset.symbol);
-            }
+        // Si l'utilisateur a déjà été liquidé, ne pas procéder à une nouvelle liquidation
+        if position_repo.has_been_liquidated(user_address).await? {
+            info!("L'utilisateur {} a déjà été liquidé, ignoré.", user_address);
+            return Err(anyhow::anyhow!("L'utilisateur a déjà été liquidé"));
         }
         
-        anyhow::bail!("Asset with ID {} not found", asset_id)
+        // Appeler la fonction du smart contract via ethers
+        info!("Liquidation de l'utilisateur {}", user_address);
+        
+        // Appel au smart contract (à implémenter quand le contrat sera disponible)
+        // Pour l'instant, simuler un hash de transaction
+        let tx_hash = format!("0x{:x}", rand::random::<u128>());
+        
+        // Marquer toutes les positions de l'utilisateur comme liquidées
+        position_repo.mark_user_positions_as_liquidated(user_address).await?;
+        
+        Ok(tx_hash)
     }
-} 
+}

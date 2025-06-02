@@ -1,16 +1,14 @@
 use axum::{
-    extract::{State, Path},
+    extract::{Path, State},
     routing::get,
-    Router, Json,
+    Json, Router,
 };
-use std::collections::HashMap;
-use std::sync::Arc;
+
+use crate::api::models::{Asset as ApiAsset, MarketStats};
 use crate::api::state::AppState;
-use anyhow::Result;
-use crate::db::postgres::AssetRepository;
 use crate::db::models::Asset;
-use crate::api::models::{MarketStats, Asset as ApiAsset};
-use crate::core::price_ws_service::PriceWebSocketService;
+use crate::db::postgres::AssetRepository;
+use anyhow::Result;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -51,10 +49,10 @@ pub async fn get_market_stats() -> Json<MarketStats> {
     )
 )]
 pub async fn get_market_assets(
-    State(state): State<AppState>
+    State(state): State<AppState>,
 ) -> Result<Json<Vec<Asset>>, axum::http::StatusCode> {
     let repo = AssetRepository::new(state.db);
-    
+
     match repo.get_all_assets().await {
         Ok(assets) => Ok(Json(assets)),
         Err(e) => {
@@ -80,10 +78,10 @@ pub async fn get_market_assets(
 )]
 pub async fn get_asset_by_symbol(
     State(state): State<AppState>,
-    Path(symbol): Path<String>
+    Path(symbol): Path<String>,
 ) -> Result<Json<Asset>, axum::http::StatusCode> {
     let repo = AssetRepository::new(state.db);
-    
+
     match repo.get_asset_by_symbol(&symbol).await {
         Ok(Some(asset)) => Ok(Json(asset)),
         Ok(None) => Err(axum::http::StatusCode::NOT_FOUND),
@@ -105,10 +103,10 @@ pub async fn get_asset_by_symbol(
     )
 )]
 pub async fn get_all_prices(
-    State(state): State<AppState>
+    State(state): State<AppState>,
 ) -> Result<Json<Vec<(String, String)>>, axum::http::StatusCode> {
     let repo = AssetRepository::new(state.db);
-    
+
     match repo.get_all_assets().await {
         Ok(assets) => {
             let prices = assets
@@ -116,7 +114,7 @@ pub async fn get_all_prices(
                 .map(|asset| (asset.symbol, asset.price.to_string()))
                 .collect();
             Ok(Json(prices))
-        },
+        }
         Err(e) => {
             tracing::error!("Failed to get asset prices: {:?}", e);
             Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
@@ -135,17 +133,17 @@ pub async fn get_all_prices(
     )
 )]
 pub async fn get_market_rates(
-    State(state): State<AppState>
+    State(state): State<AppState>,
 ) -> Result<Json<Vec<ApiAsset>>, axum::http::StatusCode> {
     // Try to get real-time prices from the price service if available
     let use_price_service = state.price_service.is_some();
-    
+
     // Get basic asset data from database
     let repo = AssetRepository::new(state.db);
     match repo.get_all_assets().await {
         Ok(db_assets) => {
             let mut api_assets = Vec::new();
-            
+
             // Get real-time prices if the price service is available
             let real_time_prices = if use_price_service {
                 match &state.price_service {
@@ -153,23 +151,23 @@ pub async fn get_market_rates(
                         let prices = price_service.get_all_prices().await;
                         Some(prices)
                     }
-                    None => None
+                    None => None,
                 }
             } else {
                 None
             };
-            
+
             for asset in db_assets {
                 // Get price from real-time service or fallback to database
                 let price = if let Some(prices) = &real_time_prices {
                     match prices.get(&asset.symbol) {
                         Some(real_time_price) => real_time_price.to_string(),
-                        None => asset.price.to_string()
+                        None => asset.price.to_string(),
                     }
                 } else {
                     asset.price.to_string()
                 };
-                
+
                 // Create API asset with rates information
                 api_assets.push(ApiAsset {
                     symbol: asset.symbol,
@@ -180,9 +178,9 @@ pub async fn get_market_rates(
                     borrow_apy: "6.8".to_string(),
                 });
             }
-            
+
             Ok(Json(api_assets))
-        },
+        }
         Err(e) => {
             tracing::error!("Failed to get market rates: {:?}", e);
             Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
@@ -193,7 +191,7 @@ pub async fn get_market_rates(
 async fn get_prices(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
     // Récupérer les prix actuels depuis le service WebSocket via l'état global
     let mut prices = serde_json::json!({});
-    
+
     // Récupérer les prix du service WebSocket si disponible
     if let Some(ws_service) = &state.price_ws_service {
         if let Some(btc_price) = ws_service.get_current_price("BTC").await {
@@ -203,7 +201,7 @@ async fn get_prices(State(state): State<AppState>) -> axum::Json<serde_json::Val
                 "exchange": btc_price.exchange
             });
         }
-        
+
         if let Some(eth_price) = ws_service.get_current_price("ETH").await {
             prices["ETH"] = serde_json::json!({
                 "price": eth_price.price,
@@ -226,7 +224,7 @@ async fn get_prices(State(state): State<AppState>) -> axum::Json<serde_json::Val
             }
         }
     }
-    
+
     // Retourner les prix
     axum::Json(serde_json::json!({
         "success": true,

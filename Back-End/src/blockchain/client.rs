@@ -1,76 +1,115 @@
-use anyhow::Result;
+use crate::core::price_ws_service::PriceUpdate;
+use anyhow::{Context, Result};
 use ethers::{
     prelude::*,
-    providers::{Provider, Ws},
-    middleware::SignerMiddleware,
-    signers::{LocalWallet, Signer},
-    contract::Contract,
-    abi::Abi,
+    providers::{Http, Provider},
+    signers::LocalWallet,
+    types::{Address, U256},
 };
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
+use tracing::info;
 
-// Cette méthode sera appelée pour interagir avec le smart contract de liquidation
-// Pour l'instant, c'est une implémentation simplifiée qui sera étoffée plus tard
-pub async fn liquidate_user(address: &str) -> Result<String> {
-    // À remplacer par une vraie connexion au nœud Ethereum
-    let rpc_url = std::env::var("ETHEREUM_RPC_URL")
-        .unwrap_or_else(|_| "wss://eth-mainnet.g.alchemy.com/v2/your-api-key".to_string());
-    
-    // Clé privée du wallet qui va exécuter la transaction (attention à ne pas hardcoder en prod)
-    let private_key = std::env::var("LIQUIDATOR_PRIVATE_KEY")
-        .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000000000000000000000000001".to_string());
+// Constantes pour la connexion Ethereum
+const RPC_URL: &str = "http://localhost:8545"; // À ajuster selon votre configuration
+const PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"; // Clé de test uniquement
+
+// Structure du contrat de liquidation
+#[derive(Debug)]
+pub struct LiquidationContract {
+    contract: ethers::contract::Contract<Provider<Http>>,
+    wallet: LocalWallet,
+    provider: Provider<Http>,
+}
+
+impl LiquidationContract {
+    // Créer une nouvelle instance du contrat
+    pub async fn new(contract_address: &str) -> Result<Self> {
+        // Connexion au noeud Ethereum
+        let provider = Provider::<Http>::try_from(RPC_URL)?;
         
-    // Adresse du contrat
-    let contract_address = std::env::var("D3FI_CONTRACT_ADDRESS")
-        .unwrap_or_else(|_| "0x0000000000000000000000000000000000000001".to_string());
-    
-    // Établir une connexion WebSocket à l'Ethereum node
-    let provider = Provider::<Ws>::connect(rpc_url).await?;
-    
-    // Configurer le wallet qui va signer les transactions
-    let wallet = private_key.parse::<LocalWallet>()?;
-    let chain_id = provider.get_chainid().await?.as_u64();
-    let wallet = wallet.with_chain_id(chain_id);
-    
-    let client = SignerMiddleware::new(provider, wallet);
-    let client = Arc::new(client);
-    
-    // L'ABI du contrat (à remplacer par l'ABI réel)
-    // Ce n'est qu'un exemple qui serait remplacé par l'ABI du contrat D3FI
-    const ABI: &str = r#"
-    [
-        {
-            "inputs": [
-                {
-                    "internalType": "address",
-                    "name": "user",
-                    "type": "address"
-                }
-            ],
-            "name": "liquidatePosition",
-            "outputs": [],
-            "stateMutability": "nonpayable",
-            "type": "function"
-        }
-    ]
-    "#;
-    
-    // Initialiser le contrat
-    let contract_address = contract_address.parse::<Address>()?;
-    let contract_abi: Abi = serde_json::from_str(ABI)?;
-    let contract = Contract::new(contract_address, contract_abi, client.clone());
-    
-    // Convertir l'adresse de l'utilisateur en Address Ethereum
-    let user_address = address.parse::<Address>()?;
-    
-    // Appeler la fonction de liquidation sur le contrat
-    // Dans un environnement de production, vous voudrez gérer plus d'options comme gas_limit, etc.
-    let tx = contract.method::<_, ()>("liquidatePosition", user_address)?
-        .send()
-        .await?
-        .await?;
+        // Configuration du wallet pour signer les transactions
+        let wallet = LocalWallet::from_str(PRIVATE_KEY)?
+            .with_chain_id(Chain::Sepolia); // À ajuster selon votre réseau (Mainnet, Goerli, etc.)
         
-    // Retourner le hash de la transaction
-    Ok(format!("{:?}", tx.unwrap().transaction_hash))
+        // Définition de l'ABI du contrat (à remplacer par le vrai ABI quand il sera disponible)
+        let abi = r#"[
+            {
+                "inputs": [
+                    {"name": "userAddress", "type": "address"},
+                    {"name": "btcPrice", "type": "uint256"},
+                    {"name": "ethPrice", "type": "uint256"}
+                ],
+                "name": "liquidateUser",
+                "outputs": [{"name": "", "type": "bool"}],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            }
+        ]"#;
+        
+        // Créer une instance du contrat
+        let contract_addr = Address::from_str(contract_address)
+            .with_context(|| format!("Invalid contract address: {}", contract_address))?;
+        
+        let abi_parsed: ethers::abi::Abi = serde_json::from_str(abi)?;
+        
+        let contract = ethers::contract::Contract::new(
+            contract_addr,
+            abi_parsed,
+            Arc::new(provider.clone()),
+        );
+        
+        Ok(Self {
+            contract,
+            wallet,
+            provider,
+        })
+    }
+    
+    // Liquider un utilisateur
+    pub async fn liquidate_user(
+        &self, 
+        user_address: &str, 
+        btc_price: &PriceUpdate, 
+        eth_price: &PriceUpdate
+    ) -> Result<String> {
+        info!("Liquidation de l'utilisateur {} avec BTC=${} et ETH=${}", 
+             user_address, btc_price.price, eth_price.price);
+        
+        let user_addr = Address::from_str(user_address)
+            .with_context(|| format!("Invalid user address: {}", user_address))?;
+        
+        // Convertir les prix en format utilisable par le contrat (entiers)
+        // Exemple : multiplier par 10^8 pour avoir 8 décimales de précision
+        let btc_price_scaled = U256::from((btc_price.price * 100_000_000.0) as u64);
+        let eth_price_scaled = U256::from((eth_price.price * 100_000_000.0) as u64);
+        
+        // Créer un client connecté avec le wallet
+        let client = Arc::new(SignerMiddleware::new(
+            self.provider.clone(),
+            self.wallet.clone(),
+        ));
+        
+        // Connecter le contrat au client
+        let contract = self.contract.connect(client);
+        
+        // Appeler la fonction de liquidation
+        let method_call = contract.method::<_, bool>(
+            "liquidateUser", 
+            (user_addr, btc_price_scaled, eth_price_scaled)
+        )?;
+        
+        let pending_tx = method_call.legacy();
+        let tx = pending_tx.send().await?;
+        
+        info!("Transaction de liquidation envoyée: {:?}", tx.tx_hash());
+        
+        // Attendre que la transaction soit confirmée
+        let receipt = tx.await?
+            .context("La transaction de liquidation a échoué")?;
+        
+        info!("Liquidation confirmée, block: {}", receipt.block_number.unwrap_or_default());
+        
+        Ok(format!("{:?}", receipt.transaction_hash))
+    }
 }

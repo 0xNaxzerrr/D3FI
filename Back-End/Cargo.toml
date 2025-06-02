@@ -41,7 +41,7 @@ dotenvy = "0.15"
 config = "0.13"
 anyhow = "1.0"        # Error handling
 thiserror = "1.0"     # Error definition
-bigdecimal = { version = "0.4", features = ["serde"] }   # For precise financial calculations
+bigdecimal = { version = "0.3.1", features = ["serde"] }   # For precise financial calculations
 rust_decimal = { version = "1.34", features = ["serde"] }
 rand = "0.8"          # For random number generation
 hex = "0.4"           # For encoding/decoding hex strings

@@ -19,7 +19,7 @@ impl PositionRepository {
             SuppliedPosition,
             r#"
             SELECT * FROM supplied_positions 
-            WHERE user_address = $1
+            WHERE user_address = $1 AND liquidated = false
             "#,
             address
         )
@@ -36,24 +36,75 @@ impl PositionRepository {
         amount: BigDecimal,
         collateral: bool
     ) -> Result<SuppliedPosition> {
-        let position = sqlx::query_as!(
-            SuppliedPosition,
+        // D'abord vérifier si une position liquidée existe
+        let existing = sqlx::query!(
             r#"
-            INSERT INTO supplied_positions (user_address, asset_id, amount, collateral)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (user_address, asset_id) 
-            DO UPDATE SET amount = supplied_positions.amount + EXCLUDED.amount,
-                          collateral = EXCLUDED.collateral,
-                          updated_at = now()
-            RETURNING *
+            SELECT id, liquidated 
+            FROM supplied_positions
+            WHERE user_address = $1 AND asset_id = $2
             "#,
             user_address,
-            asset_id,
-            amount,
-            collateral
+            asset_id
         )
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
+        
+        let position = match existing {
+            // Si une position existe et est liquidée, créer une nouvelle position
+            Some(row) if row.liquidated => {
+                sqlx::query_as!(
+                    SuppliedPosition,
+                    r#"
+                    INSERT INTO supplied_positions (user_address, asset_id, amount, collateral)
+                    VALUES ($1, $2, $3, $4)
+                    RETURNING *
+                    "#,
+                    user_address,
+                    asset_id,
+                    amount,
+                    collateral
+                )
+                .fetch_one(&self.pool)
+                .await?
+            },
+            // Si une position existe et n'est pas liquidée, mettre à jour
+            Some(_) => {
+                sqlx::query_as!(
+                    SuppliedPosition,
+                    r#"
+                    UPDATE supplied_positions
+                    SET amount = supplied_positions.amount + $3,
+                        collateral = $4,
+                        updated_at = now()
+                    WHERE user_address = $1 AND asset_id = $2 AND liquidated = false
+                    RETURNING *
+                    "#,
+                    user_address,
+                    asset_id,
+                    amount,
+                    collateral
+                )
+                .fetch_one(&self.pool)
+                .await?
+            },
+            // Si aucune position n'existe, en créer une nouvelle
+            None => {
+                sqlx::query_as!(
+                    SuppliedPosition,
+                    r#"
+                    INSERT INTO supplied_positions (user_address, asset_id, amount, collateral)
+                    VALUES ($1, $2, $3, $4)
+                    RETURNING *
+                    "#,
+                    user_address,
+                    asset_id,
+                    amount,
+                    collateral
+                )
+                .fetch_one(&self.pool)
+                .await?
+            }
+        };
 
         Ok(position)
     }
@@ -88,7 +139,7 @@ impl PositionRepository {
             BorrowedPosition,
             r#"
             SELECT * FROM borrowed_positions 
-            WHERE user_address = $1
+            WHERE user_address = $1 AND liquidated = false
             "#,
             address
         )
@@ -104,22 +155,71 @@ impl PositionRepository {
         asset_id: Uuid, 
         amount: BigDecimal
     ) -> Result<BorrowedPosition> {
-        let position = sqlx::query_as!(
-            BorrowedPosition,
+        // D'abord vérifier si une position liquidée existe
+        let existing = sqlx::query!(
             r#"
-            INSERT INTO borrowed_positions (user_address, asset_id, amount)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_address, asset_id) 
-            DO UPDATE SET amount = borrowed_positions.amount + EXCLUDED.amount,
-                          updated_at = now()
-            RETURNING *
+            SELECT id, liquidated 
+            FROM borrowed_positions
+            WHERE user_address = $1 AND asset_id = $2
             "#,
             user_address,
-            asset_id,
-            amount
+            asset_id
         )
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
+        
+        let position = match existing {
+            // Si une position existe et est liquidée, créer une nouvelle position
+            Some(row) if row.liquidated => {
+                sqlx::query_as!(
+                    BorrowedPosition,
+                    r#"
+                    INSERT INTO borrowed_positions (user_address, asset_id, amount)
+                    VALUES ($1, $2, $3)
+                    RETURNING *
+                    "#,
+                    user_address,
+                    asset_id,
+                    amount
+                )
+                .fetch_one(&self.pool)
+                .await?
+            },
+            // Si une position existe et n'est pas liquidée, mettre à jour
+            Some(_) => {
+                sqlx::query_as!(
+                    BorrowedPosition,
+                    r#"
+                    UPDATE borrowed_positions
+                    SET amount = borrowed_positions.amount + $3,
+                        updated_at = now()
+                    WHERE user_address = $1 AND asset_id = $2 AND liquidated = false
+                    RETURNING *
+                    "#,
+                    user_address,
+                    asset_id,
+                    amount
+                )
+                .fetch_one(&self.pool)
+                .await?
+            },
+            // Si aucune position n'existe, en créer une nouvelle
+            None => {
+                sqlx::query_as!(
+                    BorrowedPosition,
+                    r#"
+                    INSERT INTO borrowed_positions (user_address, asset_id, amount)
+                    VALUES ($1, $2, $3)
+                    RETURNING *
+                    "#,
+                    user_address,
+                    asset_id,
+                    amount
+                )
+                .fetch_one(&self.pool)
+                .await?
+            }
+        };
 
         Ok(position)
     }
@@ -188,5 +288,100 @@ impl PositionRepository {
         .await?;
 
         Ok(history)
+    }
+
+    // Récupérer tous les utilisateurs qui ont des positions (empruntées ou fournies)
+    pub async fn get_all_users_with_positions(&self) -> Result<Vec<String>> {
+        // Récupérer les adresses des utilisateurs avec des positions fournies
+        let supplied_users = sqlx::query!(
+            r#"
+            SELECT DISTINCT user_address 
+            FROM supplied_positions
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|row| row.user_address)
+        .collect::<Vec<String>>();
+
+        // Récupérer les adresses des utilisateurs avec des positions empruntées
+        let borrowed_users = sqlx::query!(
+            r#"
+            SELECT DISTINCT user_address 
+            FROM borrowed_positions
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|row| row.user_address)
+        .collect::<Vec<String>>();
+
+        // Combiner les deux listes et éliminer les doublons
+        let mut all_users = Vec::new();
+        
+        for user in supplied_users {
+            if !all_users.contains(&user) {
+                all_users.push(user);
+            }
+        }
+        
+        for user in borrowed_users {
+            if !all_users.contains(&user) {
+                all_users.push(user);
+            }
+        }
+        
+        Ok(all_users)
+    }
+
+    // Méthode pour marquer toutes les positions d'un utilisateur comme liquidées
+    pub async fn mark_user_positions_as_liquidated(&self, address: &str) -> Result<()> {
+        // Marquer les positions fournies
+        sqlx::query!(
+            r#"
+            UPDATE supplied_positions
+            SET liquidated = true, updated_at = now()
+            WHERE user_address = $1 AND liquidated = false
+            "#,
+            address
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Marquer les positions empruntées
+        sqlx::query!(
+            r#"
+            UPDATE borrowed_positions
+            SET liquidated = true, updated_at = now()
+            WHERE user_address = $1 AND liquidated = false
+            "#,
+            address
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    // Méthode pour vérifier si un utilisateur a déjà été liquidé
+    pub async fn has_been_liquidated(&self, address: &str) -> Result<bool> {
+        // Vérifier s'il existe des positions liquidées pour cet utilisateur
+        let result = sqlx::query!(
+            r#"
+            SELECT COUNT(*) as count
+            FROM (
+                SELECT user_address FROM supplied_positions WHERE user_address = $1 AND liquidated = true
+                UNION
+                SELECT user_address FROM borrowed_positions WHERE user_address = $1 AND liquidated = true
+            ) as liquidated_positions
+            "#,
+            address
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(result.count.unwrap_or(0) > 0)
     }
 } 

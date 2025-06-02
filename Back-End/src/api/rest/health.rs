@@ -1,14 +1,8 @@
-use axum::{
-    routing::get,
-    Router,
-    Json,
-};
 use crate::api::models::HealthResponse;
-use utoipa::ToSchema;
+use axum::{routing::get, Json, Router};
 
 pub fn router() -> Router {
-    Router::new()
-        .route("/health", get(health_check))
+    Router::new().route("/health", get(health_check))
 }
 
 /// Check the health status of the API

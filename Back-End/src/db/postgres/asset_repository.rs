@@ -1,6 +1,7 @@
 use anyhow::Result;
 use sqlx::PgPool;
 use crate::db::models::Asset;
+use uuid::Uuid;
 
 pub struct AssetRepository {
     pool: PgPool,
@@ -27,6 +28,18 @@ impl AssetRepository {
             Asset,
             "SELECT * FROM assets WHERE symbol = $1",
             symbol
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(asset)
+    }
+    
+    pub async fn get_asset_by_id(&self, id: Uuid) -> Result<Option<Asset>> {
+        let asset = sqlx::query_as!(
+            Asset,
+            "SELECT * FROM assets WHERE id = $1",
+            id
         )
         .fetch_optional(&self.pool)
         .await?;

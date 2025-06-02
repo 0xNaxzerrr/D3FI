@@ -1,16 +1,16 @@
+use crate::api::models::{HealthInfo, Transaction, UserAsset, UserPortfolio};
+use crate::api::state::AppState;
+use crate::db::models::{BorrowedPosition, SuppliedPosition};
+use crate::db::postgres::{AssetRepository, PositionRepository, UserRepository};
+use anyhow::Result;
 use axum::{
-    extract::{Path, State, Json as ExtractJson},
+    extract::{Json as ExtractJson, Path, State},
     routing::{get, post},
     Json, Router,
 };
 use sqlx::types::BigDecimal;
 use std::str::FromStr;
-use anyhow::Result;
 use utoipa::ToSchema;
-use crate::api::state::AppState;
-use crate::api::models::{UserPortfolio, UserAsset, HealthInfo, Transaction};
-use crate::db::postgres::{UserRepository, PositionRepository, AssetRepository};
-use crate::db::models::{SuppliedPosition, BorrowedPosition};
 
 // Structs pour les requêtes
 #[derive(serde::Deserialize, ToSchema)]
@@ -36,13 +36,25 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/users/:address/portfolio", get(get_user_portfolio))
         .route("/api/v1/users/:address/health", get(get_user_health))
         .route("/api/v1/users/:address/history", get(get_user_history))
-        .route("/api/v1/users/:address/health/current", get(get_user_current_health))
-        .route("/api/v1/users/:address/health/history", get(get_user_health_history))
+        .route(
+            "/api/v1/users/:address/health/current",
+            get(get_user_current_health),
+        )
+        .route(
+            "/api/v1/users/:address/health/history",
+            get(get_user_health_history),
+        )
         // Nouvelles routes
         .route("/api/v1/users/:address/supply", post(supply_asset))
         .route("/api/v1/users/:address/borrow", post(borrow_asset))
-        .route("/api/v1/users/:address/supplied-positions", get(get_supplied_positions))
-        .route("/api/v1/users/:address/borrowed-positions", get(get_borrowed_positions))
+        .route(
+            "/api/v1/users/:address/supplied-positions",
+            get(get_supplied_positions),
+        )
+        .route(
+            "/api/v1/users/:address/borrowed-positions",
+            get(get_borrowed_positions),
+        )
         .route("/users/positions", get(get_user_positions))
         .with_state(state)
 }
@@ -62,20 +74,16 @@ pub fn router(state: AppState) -> Router {
 pub async fn get_user_portfolio(Path(address): Path<String>) -> Json<UserPortfolio> {
     Json(UserPortfolio {
         address,
-        supplied_assets: vec![
-            UserAsset {
-                symbol: "ETH".to_string(),
-                amount: "10.5".to_string(),
-                value_usd: "25000.00".to_string(),
-            },
-        ],
-        borrowed_assets: vec![
-            UserAsset {
-                symbol: "USDC".to_string(),
-                amount: "15000".to_string(),
-                value_usd: "15000.00".to_string(),
-            },
-        ],
+        supplied_assets: vec![UserAsset {
+            symbol: "ETH".to_string(),
+            amount: "10.5".to_string(),
+            value_usd: "25000.00".to_string(),
+        }],
+        borrowed_assets: vec![UserAsset {
+            symbol: "USDC".to_string(),
+            amount: "15000".to_string(),
+            value_usd: "15000.00".to_string(),
+        }],
         health_factor: "1.8".to_string(),
     })
 }
@@ -186,11 +194,13 @@ pub async fn get_user_health_history(Path(_address): Path<String>) -> Json<Vec<(
 pub async fn supply_asset(
     State(state): State<AppState>,
     Path(address): Path<String>,
-    ExtractJson(request): ExtractJson<SupplyRequest>
+    ExtractJson(request): ExtractJson<SupplyRequest>,
 ) -> Result<Json<SuppliedPosition>, axum::http::StatusCode> {
     // Vérifier que l'asset existe
     let asset_repo = AssetRepository::new(state.db.clone());
-    let asset = asset_repo.get_asset_by_symbol(&request.asset_symbol).await
+    let asset = asset_repo
+        .get_asset_by_symbol(&request.asset_symbol)
+        .await
         .map_err(|e| {
             tracing::error!("Database error: {:?}", e);
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
@@ -199,13 +209,18 @@ pub async fn supply_asset(
 
     // Vérifier que l'utilisateur existe ou le créer
     let user_repo = UserRepository::new(state.db.clone());
-    if user_repo.get_user_by_address(&address).await
+    if user_repo
+        .get_user_by_address(&address)
+        .await
         .map_err(|e| {
             tracing::error!("Database error: {:?}", e);
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
         })?
-        .is_none() {
-        user_repo.create_user(&address, None, None).await
+        .is_none()
+    {
+        user_repo
+            .create_user(&address, None, None)
+            .await
             .map_err(|e| {
                 tracing::error!("Failed to create user: {:?}", e);
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR
@@ -213,21 +228,18 @@ pub async fn supply_asset(
     }
 
     // Convertir le montant en BigDecimal
-    let amount = BigDecimal::from_str(&request.amount)
-        .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let amount =
+        BigDecimal::from_str(&request.amount).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
 
     // Créer la position
     let position_repo = PositionRepository::new(state.db);
-    let position = position_repo.create_supplied_position(
-        &address,
-        asset.id,
-        amount,
-        request.collateral
-    ).await
-    .map_err(|e| {
-        tracing::error!("Failed to create supplied position: {:?}", e);
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let position = position_repo
+        .create_supplied_position(&address, asset.id, amount, request.collateral)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to create supplied position: {:?}", e);
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(position))
 }
@@ -251,11 +263,13 @@ pub async fn supply_asset(
 pub async fn borrow_asset(
     State(state): State<AppState>,
     Path(address): Path<String>,
-    ExtractJson(request): ExtractJson<BorrowRequest>
+    ExtractJson(request): ExtractJson<BorrowRequest>,
 ) -> Result<Json<BorrowedPosition>, axum::http::StatusCode> {
     // Vérifier que l'asset existe
     let asset_repo = AssetRepository::new(state.db.clone());
-    let asset = asset_repo.get_asset_by_symbol(&request.asset_symbol).await
+    let asset = asset_repo
+        .get_asset_by_symbol(&request.asset_symbol)
+        .await
         .map_err(|e| {
             tracing::error!("Database error: {:?}", e);
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
@@ -264,30 +278,31 @@ pub async fn borrow_asset(
 
     // Vérifier que l'utilisateur existe
     let user_repo = UserRepository::new(state.db.clone());
-    if user_repo.get_user_by_address(&address).await
+    if user_repo
+        .get_user_by_address(&address)
+        .await
         .map_err(|e| {
             tracing::error!("Database error: {:?}", e);
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
         })?
-        .is_none() {
+        .is_none()
+    {
         return Err(axum::http::StatusCode::NOT_FOUND);
     }
 
     // Convertir le montant en BigDecimal
-    let amount = BigDecimal::from_str(&request.amount)
-        .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let amount =
+        BigDecimal::from_str(&request.amount).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
 
     // Créer la position d'emprunt
     let position_repo = PositionRepository::new(state.db);
-    let position = position_repo.create_borrowed_position(
-        &address,
-        asset.id,
-        amount
-    ).await
-    .map_err(|e| {
-        tracing::error!("Failed to create borrowed position: {:?}", e);
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let position = position_repo
+        .create_borrowed_position(&address, asset.id, amount)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to create borrowed position: {:?}", e);
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(position))
 }
@@ -307,10 +322,10 @@ pub async fn borrow_asset(
 )]
 pub async fn get_supplied_positions(
     State(state): State<AppState>,
-    Path(address): Path<String>
+    Path(address): Path<String>,
 ) -> Result<Json<Vec<SuppliedPosition>>, axum::http::StatusCode> {
     let position_repo = PositionRepository::new(state.db);
-    
+
     match position_repo.get_user_supplied_positions(&address).await {
         Ok(positions) => Ok(Json(positions)),
         Err(e) => {
@@ -335,10 +350,10 @@ pub async fn get_supplied_positions(
 )]
 pub async fn get_borrowed_positions(
     State(state): State<AppState>,
-    Path(address): Path<String>
+    Path(address): Path<String>,
 ) -> Result<Json<Vec<BorrowedPosition>>, axum::http::StatusCode> {
     let position_repo = PositionRepository::new(state.db);
-    
+
     match position_repo.get_user_borrowed_positions(&address).await {
         Ok(positions) => Ok(Json(positions)),
         Err(e) => {
@@ -348,7 +363,7 @@ pub async fn get_borrowed_positions(
     }
 }
 
-async fn get_user_positions(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
+async fn get_user_positions(_state: State<AppState>) -> axum::Json<serde_json::Value> {
     // Pour l'instant, retourner une réponse vide
     axum::Json(serde_json::json!({
         "positions": []

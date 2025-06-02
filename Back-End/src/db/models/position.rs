@@ -20,6 +20,8 @@ pub struct SuppliedPosition {
     pub amount: BigDecimal,
     /// Indique si cette position est utilisée comme collatéral
     pub collateral: bool,
+    /// Indique si cette position a été liquidée
+    pub liquidated: bool,
     /// Date de création de la position
     #[schema(value_type = Option<String>, example = "2025-05-01T12:00:00Z")]
     pub created_at: Option<DateTime<Utc>>,
@@ -41,6 +43,8 @@ pub struct BorrowedPosition {
     #[serde(with = "bigdecimal_serde")]
     #[schema(value_type = String, example = "5.0")]
     pub amount: BigDecimal,
+    /// Indique si cette position a été liquidée
+    pub liquidated: bool,
     /// Date de création de la position
     #[schema(value_type = Option<String>, example = "2025-05-01T12:00:00Z")]
     pub created_at: Option<DateTime<Utc>>,
