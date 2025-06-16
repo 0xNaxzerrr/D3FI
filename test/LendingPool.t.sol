@@ -11,282 +11,472 @@ import "./mocks/MockERC20.sol";
 import "./mocks/MockPriceFeed.sol";
 
 contract LendingPoolTest is Test {
-    LendingPoolFactory public factory;
     LendingPool public pool;
+    LendingPoolFactory public factory;
     CToken public cToken;
-    InterestRateModel public interestRateModel;
-    PriceOracle public oracle;
-    MockERC20 public mockToken;
+    MockERC20 public token;
     MockPriceFeed public mockPriceFeed;
-
+    PriceOracle public priceOracle;
+    
     address public alice = address(0x1);
     address public bob = address(0x2);
     address public owner = address(this);
 
     function setUp() public {
-        // Déployer l'oracle d'abord
-        oracle = new PriceOracle();
-        // Déployer la factory avec l'oracle
-        factory = new LendingPoolFactory(address(oracle));
-        mockToken = new MockERC20("Mock Token", "MTK");
+        // Déployer les contrats
+        token = new MockERC20("Test Token", "TEST");
         mockPriceFeed = new MockPriceFeed();
-
-        // Configurer l'oracle
-        oracle.authorizeCaller(address(factory));
-        oracle.setPriceFeed(address(mockToken), address(mockPriceFeed));
-        // Enregistrer le price feed pour l'ETH simulé si besoin
-        oracle.setPriceFeed(address(0), address(mockPriceFeed));
-
-        // Mint des tokens pour les tests
-        mockToken.mint(alice, 2_000_000e18);
-        mockToken.mint(bob, 2_000_000e18);
-    }
-
-    function _createPoolAndCToken() internal returns (LendingPool, CToken) {
-        address payable poolAddress = payable(factory.createPool(
-            address(mockToken),
-            "Mock Token",
-            "MTK",
-            15000, // 150% de ratio de collatéral
+        priceOracle = new PriceOracle();
+        
+        // Déployer la factory
+        factory = new LendingPoolFactory(address(priceOracle));
+        
+        // Autoriser l'appelant et la factory
+        priceOracle.authorizeCaller(address(this));
+        priceOracle.authorizeCaller(address(factory));
+        
+        // Configurer les prix
+        mockPriceFeed.setPrice(1e18); // Prix initial à 1 USD
+        priceOracle.setPriceFeed(address(token), address(mockPriceFeed));
+        
+        // Créer une pool
+        pool = LendingPool(payable(factory.createPool(
+            address(token),
+            "Test Token",
+            "TEST",
+            15000,
             address(mockPriceFeed)
-        ));
-        LendingPool _pool = LendingPool(poolAddress);
-        CToken _cToken = CToken(_pool.cToken());
-        // Enregistrer le price feed pour le cToken
-        oracle.setPriceFeed(address(_cToken), address(mockPriceFeed));
-        return (_pool, _cToken);
+        )));
+        
+        // Obtenir le CToken associé
+        cToken = CToken(pool.cToken());
+        
+        // Enregistrer le price feed pour le CToken
+        priceOracle.setPriceFeed(address(cToken), address(mockPriceFeed));
+        
+        // Donner des tokens aux utilisateurs de test
+        token.mint(alice, 1000e18);
+        token.mint(bob, 1000e18);
     }
 
     function testHealthFactor() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
         // Alice dépose des tokens
         vm.startPrank(alice);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
         vm.stopPrank();
 
         // Bob fournit du collatéral et emprunte
         vm.startPrank(bob);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
-        _cToken.approve(address(_pool), 500_000e18);
-        _pool.supplyCollateral(500_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
+        cToken.approve(address(pool), 500e18);
+        pool.supplyCollateral(500e18);
 
         // Vérifier le health factor avant emprunt
-        uint256 healthFactorBefore = _pool.calculateHealthFactor(bob);
+        uint256 healthFactorBefore = pool.calculateHealthFactor(bob);
         assertEq(healthFactorBefore, type(uint256).max); // Pas d'emprunt
 
         // Emprunter
-        _pool.borrow(200_000e18);
+        pool.borrow(200e18);
 
         // Vérifier le health factor après emprunt
-        uint256 healthFactorAfter = _pool.calculateHealthFactor(bob);
+        uint256 healthFactorAfter = pool.calculateHealthFactor(bob);
         assertGt(healthFactorAfter, 1e18); // Doit être > 1.0
         vm.stopPrank();
     }
 
     function testInterestRateUpdate() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
         // Alice dépose des tokens
         vm.startPrank(alice);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
         vm.stopPrank();
 
         // Bob fournit du collatéral et emprunte
         vm.startPrank(bob);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
-        _cToken.approve(address(_pool), 500_000e18);
-        _pool.supplyCollateral(500_000e18);
-        _pool.borrow(200_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
+        cToken.approve(address(pool), 500e18);
+        pool.supplyCollateral(500e18);
+        pool.borrow(200e18);
         vm.stopPrank();
 
         // Vérifier que le taux d'intérêt a été mis à jour
-        uint256 interestRate = _pool.currentInterestRate();
+        uint256 interestRate = pool.currentInterestRate();
         assertGt(interestRate, 0);
     }
 
     function testRevertWhenBorrowWithLowHealthFactor() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
         // Alice dépose des tokens
         vm.startPrank(alice);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
         vm.stopPrank();
 
         // Bob fournit du collatéral et tente d'emprunter trop
         vm.startPrank(bob);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
-        _cToken.approve(address(_pool), 100_000e18);
-        _pool.supplyCollateral(100_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
+        cToken.approve(address(pool), 100e18);
+        pool.supplyCollateral(100e18);
 
         // Cette opération devrait échouer car le health factor serait trop bas
         vm.expectRevert("Health factor too low");
-        _pool.borrow(500_000e18);
+        pool.borrow(500e18);
         vm.stopPrank();
     }
 
     function testWithdrawCollateral() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
-        
         // Bob fournit du collatéral
         vm.startPrank(bob);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
-        _cToken.approve(address(_pool), 500_000e18);
-        _pool.supplyCollateral(500_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
+        cToken.approve(address(pool), 500e18);
+        pool.supplyCollateral(500e18);
         
         // Retirer une partie du collatéral
-        _pool.withdrawCollateral(200_000e18);
-        assertEq(_pool.collateralSupplied(bob), 300_000e18);
+        pool.withdrawCollateral(200e18);
+        assertEq(pool.collateralSupplied(bob), 300e18);
         vm.stopPrank();
     }
 
     function testRevertWithdrawCollateralInsufficient() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
-        
         vm.startPrank(bob);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
-        _cToken.approve(address(_pool), 500_000e18);
-        _pool.supplyCollateral(500_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
+        cToken.approve(address(pool), 500e18);
+        pool.supplyCollateral(500e18);
         
         vm.expectRevert("Insufficient collateral");
-        _pool.withdrawCollateral(600_000e18);
+        pool.withdrawCollateral(600e18);
         vm.stopPrank();
     }
 
     function testRevertWithdrawCollateralBreachRatio() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
-        
         // Alice dépose des tokens
         vm.startPrank(alice);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
         vm.stopPrank();
 
         // Bob fournit du collatéral et emprunte
         vm.startPrank(bob);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
-        _cToken.approve(address(_pool), 500_000e18);
-        _pool.supplyCollateral(500_000e18);
-        _pool.borrow(200_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
+        cToken.approve(address(pool), 500e18);
+        pool.supplyCollateral(500e18);
+        pool.borrow(200e18);
         
         // Tenter de retirer trop de collatéral
         vm.expectRevert("Would breach collateral ratio");
-        _pool.withdrawCollateral(400_000e18);
+        pool.withdrawCollateral(400e18);
         vm.stopPrank();
     }
 
     function testRepay() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
-        
         // Alice dépose des tokens
         vm.startPrank(alice);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
         vm.stopPrank();
 
         // Bob emprunte
         vm.startPrank(bob);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
-        _cToken.approve(address(_pool), 500_000e18);
-        _pool.supplyCollateral(500_000e18);
-        _pool.borrow(200_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
+        cToken.approve(address(pool), 500e18);
+        pool.supplyCollateral(500e18);
+        pool.borrow(200e18);
         
         // Rembourser une partie
-        mockToken.approve(address(_pool), 300_000e18); // Approbation plus grande pour couvrir les intérêts
-        _pool.repay(100_000e18);
-        assertEq(_pool.userBorrows(bob), 100_000e18);
+        token.approve(address(pool), 300e18); // Approbation plus grande pour couvrir les intérêts
+        pool.repay(100e18);
+        assertEq(pool.userBorrows(bob), 100e18);
         vm.stopPrank();
     }
 
     function testRevertRepayExceedsBorrowings() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
-        
         // Alice dépose des tokens
         vm.startPrank(alice);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
         vm.stopPrank();
 
         // Bob emprunte
         vm.startPrank(bob);
-        mockToken.approve(address(_pool), 1_000_000e18);
-        _pool.deposit(1_000_000e18);
-        _cToken.approve(address(_pool), 500_000e18);
-        _pool.supplyCollateral(500_000e18);
-        _pool.borrow(200_000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
+        cToken.approve(address(pool), 500e18);
+        pool.supplyCollateral(500e18);
+        pool.borrow(200e18);
         
         // Tenter de rembourser plus que l'emprunt
-        mockToken.approve(address(_pool), 300_000e18);
+        token.approve(address(pool), 300e18);
         vm.expectRevert("Amount exceeds borrowings");
-        _pool.repay(300_000e18);
+        pool.repay(300e18);
         vm.stopPrank();
     }
 
     function testUpdateCollateralRatio() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
-        
         // Utiliser la factory comme propriétaire
         vm.startPrank(address(factory));
-        _pool.updateCollateralRatio(16000); // 160%
-        assertEq(_pool.collateralRatio(), 16000);
+        pool.updateCollateralRatio(16000); // 160%
+        assertEq(pool.collateralRatio(), 16000);
         vm.stopPrank();
     }
 
     function testRevertUpdateCollateralRatioTooLow() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
-        
         // Utiliser la factory comme propriétaire
         vm.startPrank(address(factory));
         vm.expectRevert("Ratio must be at least 100%");
-        _pool.updateCollateralRatio(9999);
+        pool.updateCollateralRatio(9999);
         vm.stopPrank();
     }
 
     function testUpdateInterestRateModel() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
         InterestRateModel newModel = new InterestRateModel(500, 1000, 5000, 8000, 200, 15000);
         
         // Utiliser la factory comme propriétaire
         vm.startPrank(address(factory));
-        _pool.updateInterestRateModel(address(newModel));
-        assertEq(address(_pool.interestRateModel()), address(newModel));
+        pool.updateInterestRateModel(address(newModel));
+        assertEq(address(pool.interestRateModel()), address(newModel));
         vm.stopPrank();
     }
 
     function testRevertUpdateInterestRateModelInvalidAddress() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
-        
         // Utiliser la factory comme propriétaire
         vm.startPrank(address(factory));
         vm.expectRevert("Invalid address");
-        _pool.updateInterestRateModel(address(0));
+        pool.updateInterestRateModel(address(0));
         vm.stopPrank();
     }
 
     function testUpdateProtocolFeeRate() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
-        
         // Utiliser la factory comme propriétaire
         vm.startPrank(address(factory));
-        _pool.updateProtocolFeeRate(100); // 1%
-        assertEq(_pool.protocolFeeRate(), 100);
+        pool.updateProtocolFeeRate(100); // 1%
+        assertEq(pool.protocolFeeRate(), 100);
         vm.stopPrank();
     }
 
     function testRevertUpdateProtocolFeeRateTooHigh() public {
-        (LendingPool _pool, CToken _cToken) = _createPoolAndCToken();
-        
         // Utiliser la factory comme propriétaire
         vm.startPrank(address(factory));
         vm.expectRevert("Fee rate too high");
-        _pool.updateProtocolFeeRate(1001); // > 10%
+        pool.updateProtocolFeeRate(1001); // > 10%
+        vm.stopPrank();
+    }
+
+    // Helper function pour configurer une position liquide
+    function _setupLiquidatablePosition(
+        address user,
+        uint256 collateralAmount,
+        uint256 borrowAmount,
+        bool useETH
+    ) internal returns (LendingPool _pool, CToken _cToken) {
+        // Calculer les frais de protocole une seule fois
+        uint256 protocolFee = (borrowAmount * 50) / 10000; // 0.5% de frais
+        uint256 totalNeeded = borrowAmount + protocolFee;
+
+        // Créer la pool (ETH ou ERC20)
+        if (useETH) {
+            priceOracle.setPriceFeed(address(0), address(mockPriceFeed));
+            _pool = LendingPool(payable(factory.createPool(
+                address(0),
+                "Ethereum",
+                "ETH",
+                15000,
+                address(mockPriceFeed)
+            )));
+        } else {
+            _pool = pool;
+        }
+        
+        _cToken = CToken(_pool.cToken());
+        
+        // Déposer des fonds dans la pool pour permettre les emprunts
+        if (useETH) {
+            // Déposer plus d'ETH que nécessaire pour couvrir l'emprunt et les frais
+            vm.deal(address(this), totalNeeded * 2); // Déposer le double pour être sûr
+            _pool.deposit{value: totalNeeded * 2}(totalNeeded * 2);
+        } else {
+            token.mint(address(this), collateralAmount);
+            token.approve(address(_pool), collateralAmount);
+            _pool.deposit(collateralAmount);
+        }
+        
+        // User dépose et fournit du collatéral
+        vm.startPrank(user);
+        if (useETH) {
+            vm.deal(user, collateralAmount + totalNeeded);
+            _pool.deposit{value: collateralAmount}(collateralAmount);
+        } else {
+            token.mint(user, collateralAmount);
+            token.approve(address(_pool), collateralAmount);
+            _pool.deposit(collateralAmount);
+        }
+        
+        _cToken.approve(address(_pool), collateralAmount);
+        _pool.supplyCollateral(collateralAmount);
+        
+        // Emprunter avec ETH
+        if (useETH) {
+            _pool.borrow{value: totalNeeded}(borrowAmount);
+        } else {
+            _pool.borrow(borrowAmount);
+        }
+        vm.stopPrank();
+        
+        // Créer un price feed séparé pour le CToken
+        MockPriceFeed cTokenPriceFeed = new MockPriceFeed();
+        priceOracle.setPriceFeed(address(_cToken), address(cTokenPriceFeed));
+        
+        // Simuler une baisse de prix
+        cTokenPriceFeed.setPrice(0.2e18); // 80% de baisse pour le CToken
+        mockPriceFeed.setPrice(1e18); // Prix normal pour le token/ETH
+        
+        return (_pool, _cToken);
+    }
+
+    function testLiquidation() public {
+        // Setup initial
+        uint256 initialCollateral = 1000e18;
+        uint256 borrowAmount = 500e18;
+        uint256 repayAmount = 250e18;
+        
+        // Configurer une position liquide (ERC20)
+        (LendingPool testPool, CToken testCToken) = _setupLiquidatablePosition(
+            bob,
+            initialCollateral,
+            borrowAmount,
+            false
+        );
+        
+        // Vérifier que le health factor est en dessous du seuil
+        uint256 healthFactor = testPool.calculateHealthFactor(bob);
+        assertLt(healthFactor, testPool.LIQUIDATION_THRESHOLD());
+
+        // Alice dépose des tokens pour obtenir des CTokens
+        vm.startPrank(alice);
+        token.mint(alice, initialCollateral);
+        token.approve(address(testPool), initialCollateral);
+        testPool.deposit(initialCollateral);
+        
+        // Alice liquide la position
+        token.approve(address(testPool), repayAmount);
+        
+        // Calculer le montant de collatéral attendu
+        uint256 expectedCollateral = (repayAmount * testPool.collateralRatio()) / 10000;
+        uint256 expectedBonus = (expectedCollateral * testPool.LIQUIDATION_BONUS()) / 10000;
+        uint256 expectedTotalCollateral = expectedCollateral + expectedBonus;
+        
+        // Vérifier les balances avant liquidation
+        uint256 aliceCollateralBefore = testPool.collateralSupplied(alice);
+        uint256 bobCollateralBefore = testPool.collateralSupplied(bob);
+        uint256 bobBorrowsBefore = testPool.userBorrows(bob);
+        
+        // Exécuter la liquidation
+        testPool.liquidate(bob, repayAmount);
+        
+        // Vérifier les changements
+        assertEq(testPool.collateralSupplied(alice), aliceCollateralBefore + expectedTotalCollateral);
+        assertEq(testPool.collateralSupplied(bob), bobCollateralBefore - expectedTotalCollateral);
+        assertEq(testPool.userBorrows(bob), bobBorrowsBefore - repayAmount);
+        vm.stopPrank();
+    }
+
+    function testLiquidationWithETH() public {
+        // Setup: Alice emprunte 500 ETH avec 1000 ETH de collatéral
+        (LendingPool testPool, CToken testCToken) = _setupLiquidatablePosition(
+            address(0x1), // Alice
+            1000 ether,   // 1000 ETH de collatéral
+            500 ether,    // 500 ETH d'emprunt
+            true         // Utiliser ETH
+        );
+
+        // Vérifier que la position est liquidable
+        uint256 healthFactor = testPool.calculateHealthFactor(address(0x1));
+        assertTrue(healthFactor < testPool.LIQUIDATION_THRESHOLD(), "Position should be liquidable");
+
+        // Bob va liquider la position d'Alice
+        vm.startPrank(address(0x2)); // Bob
+
+        // Calculer le montant à rembourser (50% de l'emprunt)
+        uint256 repayAmount = 250 ether;
+
+        // Donner à Bob assez d'ETH pour rembourser
+        vm.deal(address(0x2), repayAmount);
+
+        // Liquider la position
+        testPool.liquidate{value: repayAmount}(address(0x1), repayAmount);
+
+        // Vérifier les soldes après liquidation
+        uint256 bobCollateral = testPool.collateralSupplied(address(0x2));
+        uint256 aliceCollateral = testPool.collateralSupplied(address(0x1));
+
+        // Bob devrait recevoir le collatéral d'Alice (moins le bonus de liquidation)
+        uint256 expectedCollateral = (repayAmount * testPool.collateralRatio()) / 10000; // 150% = 15000/10000
+        uint256 expectedBonus = (expectedCollateral * testPool.LIQUIDATION_BONUS()) / 10000; // 5% = 500/10000
+        uint256 expectedTotalCollateral = expectedCollateral + expectedBonus;
+
+        assertEq(bobCollateral, expectedTotalCollateral, "Bob should receive correct collateral amount");
+        assertEq(aliceCollateral, 1000 ether - expectedTotalCollateral, "Alice should have remaining collateral");
+
+        vm.stopPrank();
+    }
+
+    function testRevertWhenLiquidatingHealthyPosition() public {
+        // Setup initial
+        uint256 initialCollateral = 1000e18;
+        uint256 borrowAmount = 100e18; // Montant plus petit pour garder un health factor élevé
+        
+        // Configurer une position saine (ERC20)
+        (LendingPool pool, CToken cToken) = _setupLiquidatablePosition(
+            bob,
+            initialCollateral,
+            borrowAmount,
+            false
+        );
+        
+        // Vérifier que le health factor est au-dessus du seuil
+        uint256 healthFactor = pool.calculateHealthFactor(bob);
+        assertGt(healthFactor, pool.LIQUIDATION_THRESHOLD());
+        
+        // Alice essaie de liquider la position
+        vm.startPrank(alice);
+        token.mint(alice, initialCollateral);
+        token.approve(address(pool), initialCollateral);
+        pool.deposit(initialCollateral);
+        
+        // La liquidation devrait échouer
+        vm.expectRevert("Health factor too high");
+        pool.liquidate(bob, 50e18);
+        vm.stopPrank();
+    }
+
+    function testRevertWhenLiquidatingWithInvalidAmount() public {
+        // Setup initial
+        uint256 initialCollateral = 1000e18;
+        uint256 borrowAmount = 500e18;
+        
+        // Configurer une position liquide (ERC20)
+        (LendingPool pool, CToken cToken) = _setupLiquidatablePosition(
+            bob,
+            initialCollateral,
+            borrowAmount,
+            false
+        );
+        
+        // Alice essaie de liquider avec un montant invalide
+        vm.startPrank(alice);
+        token.mint(alice, initialCollateral);
+        token.approve(address(pool), initialCollateral);
+        pool.deposit(initialCollateral);
+        
+        // La liquidation devrait échouer
+        vm.expectRevert("Amount must be > 0");
+        pool.liquidate(bob, 0);
         vm.stopPrank();
     }
 }

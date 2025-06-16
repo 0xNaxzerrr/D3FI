@@ -51,10 +51,20 @@ contract LendingPool is ReentrancyGuard, Ownable {
     event Borrowed(address indexed user, uint256 amount, uint256 protocolFee);
     event Repaid(address indexed user, uint256 amount, uint256 protocolFee);
     event ProtocolFeesAccumulated(uint256 amount, uint256 totalFees);
+    event Liquidated(
+        address indexed user,
+        address indexed liquidator,
+        uint256 repayAmount,
+        uint256 collateralSeized
+    );
 
     // Constantes pour le health factor
     uint256 public constant HEALTH_FACTOR_PRECISION = 1e18;
     uint256 public constant MIN_HEALTH_FACTOR = 1e18; // 1.0
+
+    // Constantes pour la liquidation
+    uint256 public constant LIQUIDATION_THRESHOLD = 0.95e18; // 95% du health factor minimum
+    uint256 public constant LIQUIDATION_BONUS = 500; // 5% de bonus pour le liquidateur
 
     /**
      * @notice Initialise une nouvelle pool de prêt
@@ -415,6 +425,49 @@ contract LendingPool is ReentrancyGuard, Ownable {
 
         updateInterestRate();
         emit Repaid(msg.sender, amount, protocolFee);
+    }
+
+    /**
+     * @notice Liquide une position dans cette pool
+     * @param user Adresse de l'utilisateur à liquider
+     * @param repayAmount Montant de la dette à rembourser
+     */
+    function liquidate(address user, uint256 repayAmount) external payable nonReentrant {
+        require(user != address(0), "Invalid user address");
+        require(repayAmount > 0, "Amount must be > 0");
+        require(repayAmount <= userBorrows[user], "Invalid repay amount");
+        
+        // Vérifier que la position est liquidable
+        uint256 healthFactor = calculateHealthFactor(user);
+        require(healthFactor < LIQUIDATION_THRESHOLD, "Health factor too high");
+        
+        // Calculer le montant de collatéral à transférer
+        uint256 collateralAmount = (repayAmount * collateralRatio) / 10000;
+        uint256 bonusAmount = (collateralAmount * LIQUIDATION_BONUS) / 10000;
+        uint256 totalCollateral = collateralAmount + bonusAmount;
+        
+        // Vérifier que l'utilisateur a assez de collatéral
+        require(collateralSupplied[user] >= totalCollateral, "Insufficient collateral");
+        
+        // Transférer la dette
+        if (asset == address(0)) {
+            require(msg.value == repayAmount, "Insufficient ETH sent");
+        } else {
+            require(IERC20(asset).transferFrom(msg.sender, address(this), repayAmount), "Token transfer failed");
+        }
+        
+        // Mettre à jour les balances
+        userBorrows[user] -= repayAmount;
+        totalBorrows -= repayAmount;
+        
+        // Transférer le collatéral au liquidateur
+        collateralSupplied[user] -= totalCollateral;
+        collateralSupplied[msg.sender] += totalCollateral;
+        
+        // Transférer les CTokens au liquidateur
+        IERC20(cToken).safeTransfer(msg.sender, totalCollateral);
+        
+        emit Liquidated(user, msg.sender, repayAmount, totalCollateral);
     }
 
     /**
