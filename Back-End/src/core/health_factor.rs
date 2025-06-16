@@ -206,7 +206,7 @@ impl HealthFactorService {
         let supplied_positions = position_repo.get_user_supplied_positions(address).await?;
         let supplied_collateral_positions: Vec<&SuppliedPosition> = supplied_positions
             .iter()
-            .filter(|pos| pos.collateral)
+            .filter(|pos| pos.collateral && !pos.liquidated) // Ignorer les positions liquidées
             .collect();
         
         // Récupérer les positions empruntées
@@ -235,9 +235,9 @@ impl HealthFactorService {
             total_collateral_value = total_collateral_value + position_value;
         }
         
-        // Calculer la valeur totale empruntée
+        // Calculer la valeur totale empruntée (ignorer les positions liquidées)
         let mut total_borrowed_value = BigDecimal::from_str("0").unwrap();
-        for position in &borrowed_positions {
+        for position in borrowed_positions.iter().filter(|pos| !pos.liquidated) {
             let asset = match asset_repo.get_asset_by_id(position.asset_id).await? {
                 Some(a) => a,
                 None => {

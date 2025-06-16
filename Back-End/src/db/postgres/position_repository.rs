@@ -290,13 +290,14 @@ impl PositionRepository {
         Ok(history)
     }
 
-    // Récupérer tous les utilisateurs qui ont des positions (empruntées ou fournies)
+    // Récupérer tous les utilisateurs qui ont des positions ACTIVES (non liquidées)
     pub async fn get_all_users_with_positions(&self) -> Result<Vec<String>> {
-        // Récupérer les adresses des utilisateurs avec des positions fournies
+        // Récupérer les adresses des utilisateurs avec des positions fournies ACTIVES
         let supplied_users = sqlx::query!(
             r#"
             SELECT DISTINCT user_address 
             FROM supplied_positions
+            WHERE liquidated = false
             "#
         )
         .fetch_all(&self.pool)
@@ -305,11 +306,12 @@ impl PositionRepository {
         .map(|row| row.user_address)
         .collect::<Vec<String>>();
 
-        // Récupérer les adresses des utilisateurs avec des positions empruntées
+        // Récupérer les adresses des utilisateurs avec des positions empruntées ACTIVES
         let borrowed_users = sqlx::query!(
             r#"
             SELECT DISTINCT user_address 
             FROM borrowed_positions
+            WHERE liquidated = false
             "#
         )
         .fetch_all(&self.pool)
@@ -338,7 +340,7 @@ impl PositionRepository {
 
     // Méthode pour marquer toutes les positions d'un utilisateur comme liquidées
     pub async fn mark_user_positions_as_liquidated(&self, address: &str) -> Result<()> {
-        // Marquer les positions fournies
+        // Marquer les positions fournies comme liquidées (saisies par la plateforme)
         sqlx::query!(
             r#"
             UPDATE supplied_positions
@@ -350,11 +352,10 @@ impl PositionRepository {
         .execute(&self.pool)
         .await?;
 
-        // Marquer les positions empruntées
+        // Supprimer les positions empruntées (dette soldée par la saisie du collatéral)
         sqlx::query!(
             r#"
-            UPDATE borrowed_positions
-            SET liquidated = true, updated_at = now()
+            DELETE FROM borrowed_positions
             WHERE user_address = $1 AND liquidated = false
             "#,
             address
@@ -376,6 +377,26 @@ impl PositionRepository {
                 UNION
                 SELECT user_address FROM borrowed_positions WHERE user_address = $1 AND liquidated = true
             ) as liquidated_positions
+            "#,
+            address
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(result.count.unwrap_or(0) > 0)
+    }
+
+    // Méthode pour vérifier si un utilisateur a encore des positions actives (non liquidées)
+    pub async fn has_active_positions(&self, address: &str) -> Result<bool> {
+        // Vérifier s'il existe des positions actives (non liquidées) pour cet utilisateur
+        let result = sqlx::query!(
+            r#"
+            SELECT COUNT(*) as count
+            FROM (
+                SELECT user_address FROM supplied_positions WHERE user_address = $1 AND liquidated = false
+                UNION
+                SELECT user_address FROM borrowed_positions WHERE user_address = $1 AND liquidated = false
+            ) as active_positions
             "#,
             address
         )
