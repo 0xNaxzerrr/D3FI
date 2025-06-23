@@ -115,11 +115,12 @@ async fn main() -> anyhow::Result<()> {
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api::ApiDoc::openapi()));
 
     // Définir l'adresse d'écoute
-    let port = std::env::var("PORT")
-        .unwrap_or_else(|_| "3001".to_string())
+    let host = std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = std::env::var("API_PORT")
+        .unwrap_or_else(|_| "8080".to_string())
         .parse::<u16>()
-        .unwrap_or(3001);
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        .unwrap_or(8080);
+    let addr = format!("{}:{}", host, port).parse::<SocketAddr>()?;
     tracing::info!("server listening on {}", addr);
     tracing::info!("Swagger UI available at http://{}/swagger-ui", addr);
     tracing::info!("WebSocket endpoint available at ws://{}/ws", addr);
