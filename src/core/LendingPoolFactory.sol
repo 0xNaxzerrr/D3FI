@@ -191,5 +191,8 @@ contract LendingPoolFactory is ILendingPoolFactory, Ownable {
 
     // Événement pour le suivi des retraits de frais
     event FeesWithdrawn(address indexed token, uint256 amount);
+
+    // Permet à la factory de recevoir de l'ETH (pour collectProtocolFees sur pool ETH)
+    receive() external payable {}
 }
 

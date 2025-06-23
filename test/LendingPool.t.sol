@@ -10,6 +10,24 @@ import "../src/utils/PriceOracle.sol";
 import "./mocks/MockERC20.sol";
 import "./mocks/MockPriceFeed.sol";
 
+contract RejectETH {
+    fallback() external payable { revert("No ETH"); }
+}
+
+contract TestLendingPool is LendingPool {
+    constructor(
+        address _asset,
+        address _cToken,
+        address _interestRateModel,
+        address _priceOracle,
+        uint256 _collateralRatio
+    ) LendingPool(_asset, _cToken, _interestRateModel, _priceOracle, _collateralRatio) {}
+
+    function addProtocolFees(uint256 amount) public {
+        _addProtocolFees(amount);
+    }
+}
+
 contract LendingPoolTest is Test {
     LendingPool public pool;
     LendingPoolFactory public factory;
@@ -477,6 +495,117 @@ contract LendingPoolTest is Test {
         // La liquidation devrait échouer
         vm.expectRevert("Amount must be > 0");
         pool.liquidate(bob, 0);
+        vm.stopPrank();
+    }
+
+    function testRevertConstructorCollateralRatioTooLow() public {
+        address asset = address(token);
+        address cTokenAddr = address(cToken);
+        address interestRateModel = address(new InterestRateModel(100, 200, 400, 8000, 50, 2000));
+        address priceOracleAddr = address(priceOracle);
+        uint256 invalidRatio = 9999;
+        vm.expectRevert("Collateral ratio must be >= 100%");
+        new LendingPool(asset, cTokenAddr, interestRateModel, priceOracleAddr, invalidRatio);
+    }
+
+    function testUpdateInterestRateDefaultWhenNoDeposits() public {
+        // Déployer un nouveau pool sans dépôt
+        address asset = address(token);
+        address cTokenAddr = address(cToken);
+        address interestRateModel = address(new InterestRateModel(100, 200, 400, 8000, 50, 2000));
+        address priceOracleAddr = address(priceOracle);
+        uint256 ratio = 15000;
+        LendingPool newPool = new LendingPool(asset, cTokenAddr, interestRateModel, priceOracleAddr, ratio);
+        // totalDeposits == 0
+        newPool.updateInterestRate();
+        assertEq(newPool.currentInterestRate(), 500); // Taux par défaut
+    }
+
+    function testUpdateInterestRateWithDeposits() public {
+        // Mint des tokens à l'adresse du test
+        token.mint(address(this), 1000e18);
+        token.approve(address(pool), 1000e18);
+        pool.deposit(1000e18);
+        // Le taux doit être mis à jour via le modèle
+        pool.updateInterestRate();
+        uint256 rate = pool.currentInterestRate();
+        assertGt(rate, 0);
+    }
+
+    function testRevertCollectProtocolFeesWhenNoFees() public {
+        // Utiliser la factory comme propriétaire
+        vm.startPrank(address(factory));
+        vm.expectRevert("No fees to collect");
+        pool.collectProtocolFees();
+        vm.stopPrank();
+    }
+
+    function testCollectProtocolFeesETH() public {
+        // Créer une pool ETH via la factory
+        priceOracle.setPriceFeed(address(0), address(mockPriceFeed));
+        address payable ethPoolAddr = payable(factory.createPool(
+            address(0),
+            "Ethereum",
+            "ETH",
+            15000,
+            address(mockPriceFeed)
+        ));
+        LendingPool ethPool = LendingPool(ethPoolAddr);
+        CToken ethCToken = CToken(ethPool.cToken());
+        priceOracle.setPriceFeed(address(ethCToken), address(mockPriceFeed));
+
+        // Déposer de l'ETH pour générer de la liquidité
+        vm.deal(address(this), 10 ether);
+        ethPool.deposit{value: 10 ether}(10 ether);
+
+        // Bob dépose, fournit du collatéral et emprunte pour générer des frais
+        vm.deal(bob, 10 ether);
+        vm.startPrank(bob);
+        ethPool.deposit{value: 5 ether}(5 ether);
+        ethCToken.approve(address(ethPool), 2 ether);
+        ethPool.supplyCollateral(2 ether);
+        uint256 protocolFee = (1 ether * ethPool.protocolFeeRate()) / 10000;
+        ethPool.borrow{value: 1 ether + protocolFee}(1 ether);
+        vm.stopPrank();
+
+        // Vérifier que des frais ont été générés
+        uint256 expectedFees = (1 ether * ethPool.protocolFeeRate()) / 10000;
+        assertEq(ethPool.protocolFees(), expectedFees, "ETH pool: Incorrect protocol fees");
+
+        // Collecter les frais en tant que owner (factory)
+        uint256 balanceBefore = address(factory).balance;
+        vm.startPrank(address(factory));
+        ethPool.collectProtocolFees();
+        vm.stopPrank();
+        uint256 balanceAfter = address(factory).balance;
+        assertEq(ethPool.protocolFees(), 0, "ETH pool: Fees not collected");
+        assertEq(balanceAfter, balanceBefore + expectedFees, "ETH pool: Fees not transferred to owner");
+    }
+
+    function testRevertCollectProtocolFeesETHTransferFail() public {
+        // Déployer un contrat qui refuse l'ETH
+        RejectETH rejector = new RejectETH();
+        // Créer un CToken et une pool de test dédiés
+        CToken newEthCToken = new CToken("Test ETH CToken", "T-ETHC", address(0));
+        TestLendingPool ethPool = new TestLendingPool(
+            address(0),
+            address(newEthCToken),
+            address(new InterestRateModel(100, 200, 400, 8000, 50, 2000)),
+            address(priceOracle),
+            15000
+        );
+        newEthCToken.setLendingPool(address(ethPool));
+        
+        // Transférer la propriété au contrat qui refuse l'ETH
+        ethPool.transferOwnership(address(rejector));
+
+        // Simuler des frais directement
+        ethPool.addProtocolFees(1 ether);
+
+        // Tenter de collecter les frais, doit revert
+        vm.startPrank(address(rejector));
+        vm.expectRevert("ETH transfer failed");
+        ethPool.collectProtocolFees();
         vm.stopPrank();
     }
 }
