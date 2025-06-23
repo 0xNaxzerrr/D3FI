@@ -1,0 +1,45 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: d3fi-postgres
+    environment:
+      POSTGRES_DB: d3fi
+      POSTGRES_USER: d3fi_user
+      POSTGRES_PASSWORD: d3fi_password
+      PGUSER: d3fi_user
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - d3fi-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U d3fi_user -d d3fi"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: d3fi-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - d3fi-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+
+
+volumes:
+  postgres_data:
+
+networks:
+  d3fi-network:
+    driver: bridge 
