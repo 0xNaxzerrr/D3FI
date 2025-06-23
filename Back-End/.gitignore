@@ -1,0 +1,23 @@
+/target
+/node_modules
+/dist
+/build
+/coverage
+/logs
+/temp
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Rust specific
+**/*.rs.bk
+Cargo.lock
