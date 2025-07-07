@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { Web3Provider } from "@/utils/connexion/web3provider";
+import { UserPoolsProvider } from "@/utils/hooks/LendingPoolFactory/useGetUserPools";
+import { AllPoolsProvider } from "@/utils/hooks/LendingPoolFactory/useGetAllPools";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,7 +30,13 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <Web3Provider>
+          <UserPoolsProvider>
+            <AllPoolsProvider>
+              {children}
+            </AllPoolsProvider>
+          </UserPoolsProvider>
+        </Web3Provider>
       </body>
     </html>
   );

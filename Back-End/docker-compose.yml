@@ -5,12 +5,12 @@ services:
     container_name: d3fi-postgres
     environment:
       POSTGRES_DB: d3fi
-      POSTGRES_USER: d3fi_user
-      POSTGRES_PASSWORD: d3fi_password
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
       PGUSER: d3fi_user
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d
+      - /Users/coralieboyer/Desktop/Ecole/D3FI/Back-End/migrations:/app/migrations
     ports:
       - "5432:5432"
     networks:

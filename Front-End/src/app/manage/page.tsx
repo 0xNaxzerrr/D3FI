@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Background from '@/components/background';
 import Header from '@/components/navigation/header';
 import Footer from '@/components/navigation/footer';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { useGetUserBorrows } from '@/utils/hooks/LendingPool/useGetUserBorrows';
 
 interface Position {
   id: string;
@@ -51,6 +53,9 @@ const positions: Position[] = [
 ];
 
 export default function ManagePage() {
+  const searchParams = useSearchParams();
+  const pool = searchParams.get('pool');
+  const { userBorrows, isLoading, isSuccess, error } = useGetUserBorrows(pool as `0x${string}`);
   const [selectedPosition, setSelectedPosition] = useState<Position>(positions[0]);
   const [amount, setAmount] = useState('');
 

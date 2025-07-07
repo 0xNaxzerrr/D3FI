@@ -1,3 +1,6 @@
+"use client";
+
+import { ConnectKitButton } from "connectkit";
 import Link from "next/link";
 
 export default function Header() {
@@ -7,9 +10,7 @@ export default function Header() {
       <div className="flex gap-6 items-center">
         <Link href="/dashboard" className="text-gray-400 hover:text-[#FF8A65] transition-colors">Dashboard</Link>
         <Link href="/markets" className="text-gray-400 hover:text-[#FF8A65] transition-colors">Markets</Link>
-        <button className="bg-[#FF8A65]/10 hover:bg-[#FF8A65]/20 text-[#FF8A65] px-6 py-2 rounded-full transition-colors border border-[#FF8A65]/20 backdrop-blur-sm cursor-pointer">
-          Connect Wallet
-        </button>
+        <ConnectKitButton />
       </div>
     </nav>
   );

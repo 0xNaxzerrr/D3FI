@@ -1,55 +1,47 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Background from '@/components/background';
 import Header from '@/components/navigation/header';
 import Footer from '@/components/navigation/footer';
 import Link from 'next/link';
-
-interface Token {
-  id: string;
-  name: string;
-  symbol: string;
-  icon: string;
-  balance: number;
-  apy: number;
-}
-
-const tokens: Token[] = [
-  {
-    id: 'eth',
-    name: 'Ethereum',
-    symbol: 'ETH',
-    icon: '/eth.svg',
-    balance: 0.5,
-    apy: 3.2
-  },
-  {
-    id: 'usdc',
-    name: 'USD Coin',
-    symbol: 'USDC',
-    icon: '/usdc.svg',
-    balance: 1000,
-    apy: 2.8
-  },
-  {
-    id: 'dai',
-    name: 'Dai',
-    symbol: 'DAI',
-    icon: '/dai.svg',
-    balance: 500,
-    apy: 2.5
-  }
-];
+import { useGetAllPools } from '@/utils/hooks/LendingPoolFactory/useGetAllPools';
+import { Market } from '@/utils/types/marketType';
+import { getPoolDatasByAddress } from '@/services/market';
+import { useDeposit } from '@/utils/hooks/LendingPool/useDeposit';
+import { MARKETS } from '@/utils/constants/MARKETS';
+import { useAccount } from 'wagmi';
 
 export default function DepositPage() {
-  const [selectedToken, setSelectedToken] = useState<Token>(tokens[0]);
+  const { allPools, isLoading, isSuccess, error } = useGetAllPools();
+  const { address } = useAccount();
+  const [tokens, setTokens] = useState<Market[]>([]);
+  const [selectedToken, setSelectedToken] = useState<Market | null>(null);
   const [amount, setAmount] = useState('');
+  const [userError, setUserError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTokens(MARKETS);
+    setSelectedToken(MARKETS[0]);
+  }, [allPools]);
+
+  const poolAddress = allPools[tokens.findIndex(t => t.address === selectedToken?.address)] as `0x${string}` | undefined;
+  const depositHook = useDeposit({
+    poolAddress: poolAddress || ('' as `0x${string}`),
+    asset: selectedToken?.address || ('' as `0x${string}`),
+    amount
+  });
 
   const handleDeposit = () => {
-    // TODO: Implement deposit logic
-    console.log('Depositing', amount, selectedToken.symbol);
+    setUserError(null);
+    if (!address) {
+      setUserError('Veuillez connecter votre wallet pour déposer.');
+      return;
+    }
+    if (!depositHook.isApproving && !depositHook.isDepositPending) {
+      depositHook.deposit();
+    }
   };
 
   return (
@@ -96,12 +88,12 @@ export default function DepositPage() {
             <div className="mb-8">
               <h2 className="text-xl font-semibold mb-4">Sélectionner un actif</h2>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {tokens.map((token) => (
+                {tokens.map((token: Market) => (
                   <button
-                    key={token.id}
+                    key={token.address}
                     onClick={() => setSelectedToken(token)}
                     className={`p-4 rounded-2xl border transition-colors backdrop-blur-sm cursor-pointer text-left ${
-                      selectedToken.id === token.id
+                      selectedToken?.address === token.address
                         ? 'bg-[#FF8A65]/10 border-[#FF8A65]/20'
                         : 'bg-black/40 border-[#FF8A65]/10 hover:border-[#FF8A65]/20'
                     }`}
@@ -109,7 +101,7 @@ export default function DepositPage() {
                     <div className="flex items-center gap-3 mb-3">
                       <div className="w-10 h-10 rounded-full bg-[#FF8A65]/10 flex items-center justify-center">
                         <Image
-                          src={token.icon}
+                          src={token.logo}
                           alt={token.name}
                           width={24}
                           height={24}
@@ -121,13 +113,9 @@ export default function DepositPage() {
                         <p className="text-sm text-gray-400">{token.name}</p>
                       </div>
                     </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-400">Solde</span>
-                      <span className="text-white">{token.balance} {token.symbol}</span>
-                    </div>
                     <div className="flex justify-between text-sm mt-1">
                       <span className="text-gray-400">APY</span>
-                      <span className="text-[#FF8A65]">{token.apy}%</span>
+                      <span className="text-[#FF8A65]">{token.apy/100}%</span>
                     </div>
                   </button>
                 ))}
@@ -147,13 +135,7 @@ export default function DepositPage() {
                     className="w-full px-4 py-3 rounded-xl bg-black/40 text-white border border-[#FF8A65]/10 focus:border-[#FF8A65]/20 focus:ring-1 focus:ring-[#FF8A65]/20 backdrop-blur-sm focus:outline-none"
                   />
                   <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                    <span className="text-gray-400">{selectedToken.symbol}</span>
-                    <button
-                      onClick={() => setAmount(selectedToken.balance.toString())}
-                      className="text-[#FF8A65] text-sm hover:underline cursor-pointer"
-                    >
-                      MAX
-                    </button>
+                    <span className="text-gray-400">{selectedToken?.symbol}</span>
                   </div>
                 </div>
               </div>
@@ -162,12 +144,12 @@ export default function DepositPage() {
               <div className="space-y-3 mb-6">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">APY estimé</span>
-                  <span className="text-[#FF8A65]">{selectedToken.apy}%</span>
+                  <span className="text-[#FF8A65]">{selectedToken?.apy ? (selectedToken.apy/100) : 0}%</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Rendement annuel estimé</span>
                   <span className="text-white">
-                    {amount ? ((parseFloat(amount) * selectedToken.apy) / 100).toFixed(2) : '0.00'} {selectedToken.symbol}
+                    {amount ? ((parseFloat(amount) * selectedToken?.apy!) / 100).toFixed(2) : '0.00'} {selectedToken?.symbol}
                   </span>
                 </div>
               </div>
@@ -175,15 +157,31 @@ export default function DepositPage() {
               {/* Deposit Button */}
               <button
                 onClick={handleDeposit}
-                disabled={!amount || parseFloat(amount) <= 0}
+                disabled={!address || !amount || parseFloat(amount) <= 0 || depositHook.isApproving || depositHook.isDepositPending}
                 className={`w-full py-3 rounded-xl font-medium transition-colors cursor-pointer ${
-                  amount && parseFloat(amount) > 0
+                  address && amount && parseFloat(amount) > 0 && !depositHook.isApproving && !depositHook.isDepositPending
                     ? 'bg-[#FF8A65]/10 hover:bg-[#FF8A65]/20 text-[#FF8A65] border border-[#FF8A65]/20'
                     : 'bg-black/40 text-gray-500 border border-gray-700 cursor-not-allowed'
                 } backdrop-blur-sm`}
               >
-                Déposer {selectedToken.symbol}
+                {depositHook.isApproving
+                  ? 'Approval en cours...'
+                  : depositHook.isDepositPending
+                  ? 'Dépôt en cours...'
+                  : `Déposer ${selectedToken?.symbol}`}
               </button>
+              {userError && (
+                <div className="text-red-400 text-sm mt-2">{userError}</div>
+              )}
+              {depositHook.approveError && (
+                <div className="text-red-400 text-sm mt-2">{depositHook.approveError}</div>
+              )}
+              {depositHook.depositError && (
+                <div className="text-red-400 text-sm mt-2">{depositHook.depositError}</div>
+              )}
+              {depositHook.isConfirmed && (
+                <div className="text-green-400 text-sm mt-2">Dépôt confirmé !</div>
+              )}
             </div>
 
           </div>
