@@ -8,41 +8,6 @@ import Footer from '@/components/navigation/footer';
 import { useGetAllPools } from '@/utils/hooks/LendingPoolFactory/useGetAllPools';
 import { MARKETS } from '@/utils/constants/MARKETS';
 
-// const markets: Market[] = [
-//   {
-//     id: 'eth',
-//     token: 'Ethereum',
-//     symbol: 'ETH',
-//     supplyAPY: 3.2,
-//     borrowAPY: 4.5,
-//     totalSupply: 1250000,
-//     totalBorrow: 450000,
-//     utilization: 36,
-//     icon: '/eth.svg'
-//   },
-//   {
-//     id: 'usdc',
-//     token: 'USD Coin',
-//     symbol: 'USDC',
-//     supplyAPY: 2.8,
-//     borrowAPY: 4.1,
-//     totalSupply: 8500000,
-//     totalBorrow: 3200000,
-//     utilization: 37.6,
-//     icon: '/usdc.svg'
-//   },
-//   {
-//     id: 'dai',
-//     token: 'Dai',
-//     symbol: 'DAI',
-//     supplyAPY: 2.5,
-//     borrowAPY: 3.8,
-//     totalSupply: 6500000,
-//     totalBorrow: 2400000,
-//     utilization: 36.9,
-//     icon: '/dai.svg'
-//   }
-// ];
 
 export default function MarketsPage() {
   const [searchTerm, setSearchTerm] = useState('');
